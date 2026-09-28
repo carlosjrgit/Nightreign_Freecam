@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::{collections::HashMap, fs, fs::File};
 
-use clap::{command, Args, Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use fromsoftware_shared::{find_rtti_classes, Class};
 use memmap::MmapOptions;
 use pelite::{
@@ -292,7 +292,7 @@ impl MapperProfilePattern {
     /// Consumes self and looks up the pattern in [program].
     fn find<'a>(&self, program: &impl Pe<'a>) -> Vec<MapperEntryResult> {
         let Ok(scanner_pattern) = pattern::parse(&self.pattern) else {
-            panic!("Could not parse provided pattern \"{}\"", &self.pattern)
+            panic!("Could not parse provided pattern \"{}\"", self.pattern)
         };
 
         let mut matches = vec![0u32; self.captures.len()];

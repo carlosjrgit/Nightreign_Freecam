@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms, clippy::missing_safety_doc)]
+
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -123,14 +125,36 @@ extern "system" {
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
     fn FillRect(hDC: isize, lprc: *const RECT, hbr: isize) -> i32;
     fn FrameRect(hDC: isize, lprc: *const RECT, hbr: isize) -> i32;
-    fn DrawTextW(hDC: isize, lpchText: *const u16, cchText: i32, lprc: *mut RECT, format: u32) -> i32;
-    fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> BOOL;
-    fn EnumWindows(lpEnumFunc: Option<unsafe extern "system" fn(isize, isize) -> BOOL>, lParam: isize) -> BOOL;
+    fn DrawTextW(
+        hDC: isize,
+        lpchText: *const u16,
+        cchText: i32,
+        lprc: *mut RECT,
+        format: u32,
+    ) -> i32;
+    fn SetWindowPos(
+        hWnd: isize,
+        hWndInsertAfter: isize,
+        X: i32,
+        Y: i32,
+        cx: i32,
+        cy: i32,
+        uFlags: u32,
+    ) -> BOOL;
+    fn EnumWindows(
+        lpEnumFunc: Option<unsafe extern "system" fn(isize, isize) -> BOOL>,
+        lParam: isize,
+    ) -> BOOL;
     fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
     fn IsWindowVisible(hWnd: isize) -> BOOL;
     fn DestroyWindow(hWnd: isize) -> BOOL;
     fn PostQuitMessage(nExitCode: i32);
-    fn SetTimer(hWnd: isize, nIDEvent: usize, uElapse: u32, lpTimerFunc: Option<unsafe extern "system" fn(isize, u32, usize, u32)>) -> usize;
+    fn SetTimer(
+        hWnd: isize,
+        nIDEvent: usize,
+        uElapse: u32,
+        lpTimerFunc: Option<unsafe extern "system" fn(isize, u32, usize, u32)>,
+    ) -> usize;
 }
 
 #[link(name = "kernel32")]
@@ -195,12 +219,13 @@ unsafe extern "system" fn overlay_wnd_proc(
                 let mut pid = 0u32;
                 GetWindowThreadProcessId(w, &mut pid);
                 let my_pid = *(lparam as *const u32);
-                if pid == my_pid && w != (OVERLAY_HWND.load(Ordering::Relaxed) as isize) {
-                    if IsWindowVisible(w).0 != 0 {
-                        let found_ptr = (lparam as *mut u32).add(1) as *mut bool;
-                        *found_ptr = true;
-                        return BOOL(0);
-                    }
+                if pid == my_pid
+                    && w != (OVERLAY_HWND.load(Ordering::Relaxed) as isize)
+                    && IsWindowVisible(w).0 != 0
+                {
+                    let found_ptr = (lparam as *mut u32).add(1) as *mut bool;
+                    *found_ptr = true;
+                    return BOOL(0);
                 }
                 BOOL(1)
             }
@@ -222,7 +247,12 @@ unsafe extern "system" fn overlay_wnd_proc(
 }
 
 unsafe fn render_overlay_ui(hdc: isize) {
-    let full_rc = RECT { left: 0, top: 0, right: 330, bottom: 370 };
+    let full_rc = RECT {
+        left: 0,
+        top: 0,
+        right: 330,
+        bottom: 370,
+    };
     let bg_brush = CreateSolidBrush(rgb(16, 18, 24));
     FillRect(hdc, &full_rc, bg_brush);
     DeleteObject(bg_brush);
@@ -242,17 +272,44 @@ unsafe fn render_overlay_ui(hdc: isize) {
     SelectObject(hdc, font_title);
     SetTextColor(hdc, rgb(240, 195, 75));
     let title_w = to_wide_null("FREECAM GUIDE");
-    let mut rc_title = RECT { left: 16, top: 12, right: 314, bottom: 32 };
-    DrawTextW(hdc, title_w.as_ptr(), (title_w.len() - 1) as i32, &mut rc_title, 0x00000000 | 0x00000020);
+    let mut rc_title = RECT {
+        left: 16,
+        top: 12,
+        right: 314,
+        bottom: 32,
+    };
+    DrawTextW(
+        hdc,
+        title_w.as_ptr(),
+        (title_w.len() - 1) as i32,
+        &mut rc_title,
+        0x00000020,
+    );
 
     SelectObject(hdc, font_sub);
     SetTextColor(hdc, rgb(150, 160, 175));
     let sub_w = to_wide_null("[H] or [F2] to Toggle Guide");
-    let mut rc_sub = RECT { left: 16, top: 32, right: 314, bottom: 48 };
-    DrawTextW(hdc, sub_w.as_ptr(), (sub_w.len() - 1) as i32, &mut rc_sub, 0x00000000 | 0x00000020);
+    let mut rc_sub = RECT {
+        left: 16,
+        top: 32,
+        right: 314,
+        bottom: 48,
+    };
+    DrawTextW(
+        hdc,
+        sub_w.as_ptr(),
+        (sub_w.len() - 1) as i32,
+        &mut rc_sub,
+        0x00000020,
+    );
 
     let div_brush = CreateSolidBrush(rgb(45, 55, 72));
-    let div1_rc = RECT { left: 16, top: 52, right: 314, bottom: 53 };
+    let div1_rc = RECT {
+        left: 16,
+        top: 52,
+        right: 314,
+        bottom: 53,
+    };
     FillRect(hdc, &div1_rc, div_brush);
 
     let items = [
@@ -271,27 +328,65 @@ unsafe fn render_overlay_ui(hdc: isize) {
         SelectObject(hdc, font_bold);
         SetTextColor(hdc, rgb(225, 230, 240));
         let key_w = to_wide_null(key);
-        let mut rc_k = RECT { left: 16, top: y, right: 135, bottom: y + 24 };
-        DrawTextW(hdc, key_w.as_ptr(), (key_w.len() - 1) as i32, &mut rc_k, 0x00000000 | 0x00000020 | 0x00000004);
+        let mut rc_k = RECT {
+            left: 16,
+            top: y,
+            right: 135,
+            bottom: y + 24,
+        };
+        DrawTextW(
+            hdc,
+            key_w.as_ptr(),
+            (key_w.len() - 1) as i32,
+            &mut rc_k,
+            0x00000024,
+        );
 
         SelectObject(hdc, font_norm);
         SetTextColor(hdc, rgb(165, 175, 195));
         let desc_w = to_wide_null(desc);
-        let mut rc_d = RECT { left: 135, top: y, right: 314, bottom: y + 24 };
-        DrawTextW(hdc, desc_w.as_ptr(), (desc_w.len() - 1) as i32, &mut rc_d, 0x00000000 | 0x00000020 | 0x00000004);
+        let mut rc_d = RECT {
+            left: 135,
+            top: y,
+            right: 314,
+            bottom: y + 24,
+        };
+        DrawTextW(
+            hdc,
+            desc_w.as_ptr(),
+            (desc_w.len() - 1) as i32,
+            &mut rc_d,
+            0x00000024,
+        );
 
         y += 32;
     }
 
-    let div2_rc = RECT { left: 16, top: y + 4, right: 314, bottom: y + 5 };
+    let div2_rc = RECT {
+        left: 16,
+        top: y + 4,
+        right: 314,
+        bottom: y + 5,
+    };
     FillRect(hdc, &div2_rc, div_brush);
     DeleteObject(div_brush);
 
     SelectObject(hdc, font_sub);
     SetTextColor(hdc, rgb(80, 200, 150));
     let footer_w = to_wide_null("Keyboard & Mouse Mode Active");
-    let mut rc_footer = RECT { left: 16, top: y + 10, right: 314, bottom: y + 28 };
-    DrawTextW(hdc, footer_w.as_ptr(), (footer_w.len() - 1) as i32, &mut rc_footer, 0x00000000 | 0x00000020 | 0x00000004);
+    let mut rc_footer = RECT {
+        left: 16,
+        top: y + 10,
+        right: 314,
+        bottom: y + 28,
+    };
+    DrawTextW(
+        hdc,
+        footer_w.as_ptr(),
+        (footer_w.len() - 1) as i32,
+        &mut rc_footer,
+        0x00000024,
+    );
 
     DeleteObject(font_title);
     DeleteObject(font_sub);
@@ -300,64 +395,62 @@ unsafe fn render_overlay_ui(hdc: isize) {
 }
 
 fn start_overlay_thread() {
-    std::thread::spawn(|| {
-        unsafe {
-            let class_name = to_wide_null("NightreignFreecamOSD");
-            let title = to_wide_null("Freecam Guide");
+    std::thread::spawn(|| unsafe {
+        let class_name = to_wide_null("NightreignFreecamOSD");
+        let title = to_wide_null("Freecam Guide");
 
-            let mut wc = std::mem::zeroed::<WNDCLASSEXW>();
-            wc.cb_size = std::mem::size_of::<WNDCLASSEXW>() as u32;
-            wc.style = 0x0003;
-            wc.lpfn_wnd_proc = Some(overlay_wnd_proc);
-            wc.lpsz_class_name = class_name.as_ptr();
+        let mut wc = std::mem::zeroed::<WNDCLASSEXW>();
+        wc.cb_size = std::mem::size_of::<WNDCLASSEXW>() as u32;
+        wc.style = 0x0003;
+        wc.lpfn_wnd_proc = Some(overlay_wnd_proc);
+        wc.lpsz_class_name = class_name.as_ptr();
 
-            RegisterClassExW(&wc);
+        RegisterClassExW(&wc);
 
-            let screen_w = GetSystemMetrics(SM_CXSCREEN);
-            let overlay_w = 330;
-            let overlay_h = 370;
-            let x = if screen_w > (overlay_w + 30) {
-                screen_w - overlay_w - 24
-            } else {
-                24
-            };
-            let y = 24;
+        let screen_w = GetSystemMetrics(SM_CXSCREEN);
+        let overlay_w = 330;
+        let overlay_h = 370;
+        let x = if screen_w > (overlay_w + 30) {
+            screen_w - overlay_w - 24
+        } else {
+            24
+        };
+        let y = 24;
 
-            let ex_style = 0x00000008 | 0x00080000 | 0x00000020 | 0x08000000 | 0x00000080;
-            let style = 0x80000000;
+        let ex_style = 0x00000008 | 0x00080000 | 0x00000020 | 0x08000000 | 0x00000080;
+        let style = 0x80000000;
 
-            let hwnd = CreateWindowExW(
-                ex_style,
-                class_name.as_ptr(),
-                title.as_ptr(),
-                style,
-                x,
-                y,
-                overlay_w,
-                overlay_h,
-                0,
-                0,
-                0,
-                std::ptr::null_mut(),
-            );
+        let hwnd = CreateWindowExW(
+            ex_style,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            style,
+            x,
+            y,
+            overlay_w,
+            overlay_h,
+            0,
+            0,
+            0,
+            std::ptr::null_mut(),
+        );
 
-            if hwnd == 0 {
-                return;
-            }
+        if hwnd == 0 {
+            return;
+        }
 
-            SetLayeredWindowAttributes(hwnd, 0, 215, 0x00000002);
-            OVERLAY_HWND.store(hwnd as usize, Ordering::SeqCst);
+        SetLayeredWindowAttributes(hwnd, 0, 215, 0x00000002);
+        OVERLAY_HWND.store(hwnd as usize, Ordering::SeqCst);
 
-            SetTimer(hwnd, 1, 250, None);
+        SetTimer(hwnd, 1, 250, None);
 
-            ShowWindow(hwnd, 4);
-            UpdateWindow(hwnd);
+        ShowWindow(hwnd, 4);
+        UpdateWindow(hwnd);
 
-            let mut msg = std::mem::zeroed::<MSG>();
-            while GetMessageW(&mut msg, 0, 0, 0).0 > 0 {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+        let mut msg = std::mem::zeroed::<MSG>();
+        while GetMessageW(&mut msg, 0, 0, 0).0 > 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
     });
 }
@@ -378,7 +471,7 @@ fn is_valid_ptr<T>(ptr: *const T) -> bool {
         return false;
     }
     let addr = ptr as usize;
-    addr >= 0x10000 && addr <= 0x0000_7fff_ffff_ffff
+    (0x10000..=0x0000_7fff_ffff_ffff).contains(&addr)
 }
 
 fn is_key_down(vk: i32) -> bool {
@@ -436,7 +529,8 @@ unsafe extern "system" fn hooked_set_cursor_pos(x: i32, y: i32) -> BOOL {
 fn real_set_cursor_pos(x: i32, y: i32) {
     let orig = ORIGINAL_SET_CURSOR_POS.load(Ordering::Relaxed);
     if orig != 0 {
-        let orig_fn: unsafe extern "system" fn(i32, i32) -> BOOL = unsafe { std::mem::transmute(orig) };
+        let orig_fn: unsafe extern "system" fn(i32, i32) -> BOOL =
+            unsafe { std::mem::transmute(orig) };
         unsafe {
             let _ = orig_fn(x, y);
         }
@@ -459,7 +553,8 @@ unsafe fn install_iat_hooks() {
         if cur != 0 && cur != (hooked_xinput_get_state as usize) {
             ORIGINAL_XINPUT_GET_STATE.store(cur, Ordering::SeqCst);
             let mut old_protect = PAGE_PROTECTION_FLAGS(0);
-            if VirtualProtect(xinput_slot as *const _, 8, PAGE_READWRITE, &mut old_protect).is_ok() {
+            if VirtualProtect(xinput_slot as *const _, 8, PAGE_READWRITE, &mut old_protect).is_ok()
+            {
                 *xinput_slot = hooked_xinput_get_state as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(xinput_slot as *const _, 8, old_protect, &mut dummy);
@@ -473,7 +568,8 @@ unsafe fn install_iat_hooks() {
         if cur != 0 && cur != (hooked_set_cursor_pos as usize) {
             ORIGINAL_SET_CURSOR_POS.store(cur, Ordering::SeqCst);
             let mut old_protect = PAGE_PROTECTION_FLAGS(0);
-            if VirtualProtect(cursor_slot as *const _, 8, PAGE_READWRITE, &mut old_protect).is_ok() {
+            if VirtualProtect(cursor_slot as *const _, 8, PAGE_READWRITE, &mut old_protect).is_ok()
+            {
                 *cursor_slot = hooked_set_cursor_pos as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(cursor_slot as *const _, 8, old_protect, &mut dummy);
@@ -740,7 +836,9 @@ fn run_freecam_loop() {
             if let Some(phys) = get_player_physics_ptr() {
                 unsafe {
                     let pos = *(phys.add(0x70) as *const [f32; 4]);
-                    if (pos[0].abs() > 0.1 || pos[1].abs() > 0.1 || pos[2].abs() > 0.1) && pos[0].is_finite() {
+                    if (pos[0].abs() > 0.1 || pos[1].abs() > 0.1 || pos[2].abs() > 0.1)
+                        && pos[0].is_finite()
+                    {
                         spawn_origin_pos = Some([pos[0], pos[1], pos[2]]);
                         log_msg(&format!(
                             "Spawn origin registered: ({:.2}, {:.2}, {:.2})",
@@ -753,7 +851,8 @@ fn run_freecam_loop() {
 
         let toggle_p = is_key_pressed(0x50, &mut p_key_down);
         let toggle_f1 = is_key_pressed(0x70, &mut f1_key_down);
-        let toggle_osd = is_key_pressed(0x48, &mut h_key_down) || is_key_pressed(0x71, &mut f2_key_down);
+        let toggle_osd =
+            is_key_pressed(0x48, &mut h_key_down) || is_key_pressed(0x71, &mut f2_key_down);
         let reset_r = is_key_pressed(0x52, &mut r_key_down);
 
         if toggle_osd {
@@ -785,8 +884,8 @@ fn run_freecam_loop() {
             log_msg(&format!("CSCamera resolved at {:p}", camera));
         }
 
-        let rescue_home = is_key_pressed(0x24, &mut home_down)
-            || is_key_pressed(0x08, &mut backspace_down);
+        let rescue_home =
+            is_key_pressed(0x24, &mut home_down) || is_key_pressed(0x08, &mut backspace_down);
 
         if rescue_home {
             if let Some(origin) = spawn_origin_pos {
@@ -911,7 +1010,6 @@ fn run_freecam_loop() {
             speed_multiplier *= 0.25;
         }
 
-
         let move_speed = base_speed * speed_multiplier;
         let rot_speed = 2.0f32;
 
@@ -983,7 +1081,6 @@ fn run_freecam_loop() {
         if reset_r {
             cam_roll = 0.0;
         }
-
 
         cam_pitch = cam_pitch.clamp(-1.55, 1.55);
 

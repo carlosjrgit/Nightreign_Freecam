@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use std::env;
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
@@ -153,14 +155,14 @@ fn main() {
             return;
         }
 
-        let kernel32 = GetModuleHandleA(b"kernel32.dll\0".as_ptr());
+        let kernel32 = GetModuleHandleA(c"kernel32.dll".as_ptr().cast());
         if kernel32 == 0 {
             eprintln!("Failed to get kernel32.dll handle.");
             CloseHandle(process);
             return;
         }
 
-        let load_lib_addr = GetProcAddress(kernel32, b"LoadLibraryW\0".as_ptr());
+        let load_lib_addr = GetProcAddress(kernel32, c"LoadLibraryW".as_ptr().cast());
         if load_lib_addr.is_null() {
             eprintln!("Failed to locate LoadLibraryW.");
             CloseHandle(process);

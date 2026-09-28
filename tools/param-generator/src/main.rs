@@ -96,7 +96,7 @@ fn generate_code(index: usize, def: &StructDef) -> String {
 
                 let group_name = format!("bits_{:x}", &unit.offset);
 
-                code.push_str(&format!("    {}: u8,\n", &group_name));
+                code.push_str(&format!("    {}: u8,\n", group_name));
 
                 grouped_names.insert(unit.offset, group_name);
             }

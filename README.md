@@ -1,3 +1,5 @@
+![Elden Ring Nightreign Freecam](assets/banner.jpg)
+
 # Elden Ring Nightreign — Freecam
 
 A standalone, high-performance Freecam and camera manipulation toolkit for **ELDEN RING: NIGHTREIGN**, written in Rust.
@@ -49,23 +51,52 @@ All controls are operated via Keyboard and Mouse:
 
 ---
 
-## Installation & Setup
+## Installation & How to Use
 
-No installation scripts or batch files are required. You only need two files:
+Follow these clear step-by-step instructions to install and use the Freecam:
 
-1. **Download:** Grab the latest release from the [Releases](https://github.com/carlosjrgit/Nightreign_Freecam/releases) tab:
-   - `FreecamLauncher.exe`
-   - `Freecam.dll`
-2. **Copy:** Place both `FreecamLauncher.exe` and `Freecam.dll` directly inside your game directory (the folder containing `nightreign.exe`).
-3. **Run the Game:** Start *ELDEN RING: NIGHTREIGN* and load your character into the game world.
-4. **Launch Freecam:** Double-click `FreecamLauncher.exe` (run as Administrator if your game runs with elevated privileges).
-5. **Enjoy:** Return to the game, press **`P`** or **`F1`** to toggle Freecam, and press **`H`** or **`F2`** to show/hide the on-screen guide!
+### Step 1: Download the Files
+Go to the **[Releases](https://github.com/carlosjrgit/Nightreign_Freecam/releases)** page and download the two required files:
+- **`FreecamLauncher.exe`**
+- **`Freecam.dll`**
+
+*(No installation scripts, external mod loaders, or batch files are needed!)*
+
+---
+
+### Step 2: Place Files in the Game Folder
+Copy both **`FreecamLauncher.exe`** and **`Freecam.dll`** directly into your **`Game`** directory (the folder where `nightreign.exe` is located).
+
+Example directory structure:
+```text
+ELDEN RING NIGHTREIGN/
+└── Game/
+    ├── nightreign.exe
+    ├── FreecamLauncher.exe   <-- Place here
+    └── Freecam.dll           <-- Place here
+```
+
+---
+
+### Step 3: Launch Order (Important!)
+1. **Start the Game First:** Open *ELDEN RING: NIGHTREIGN* normally.
+2. **Load your Character:** Navigate past the title and main menu, load your save game, and make sure your character is fully loaded and standing in the game world.
+3. **Run the Launcher as Administrator:** While the game is running with your character loaded, right-click **`FreecamLauncher.exe`** inside the `Game` folder and click **Run as administrator**.
+4. The launcher will automatically find the `nightreign.exe` process, inject `Freecam.dll`, and display a success message.
+
+---
+
+### Step 4: Use Freecam
+Switch back to the game window:
+- Press **`P`** or **`F1`** to toggle Freecam on or off.
+- An in-game transparent guide will appear on the side showing the controls. Press **`H`** or **`F2`** to hide or show this guide at any time.
+- Fly around freely with **`W`**, **`A`**, **`S`**, **`D`**, ascend with **`Space`**, descend with **`Ctrl`**, and rotate with the **`Mouse`**!
 
 ---
 
 ## Building from Source
 
-To compile the binaries yourself from the source code:
+To compile the binaries yourself from source code:
 
 ### Prerequisites
 - [Rust](https://www.rust-lang.org/) (2021 edition or newer)
@@ -90,6 +121,7 @@ The compiled binaries will be generated at:
 ## Project Structure
 
 ```text
+├── assets/                  # Presentation banner & visual assets
 ├── crates/
 │   ├── eldenring/           # Elden Ring engine structure definitions
 │   ├── nightreign/          # Nightreign memory signatures, RVA tables & classes

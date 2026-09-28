@@ -8,20 +8,20 @@ mod rva_data;
 
 pub use bundle::*;
 
-const LANG_ID_EN: u16 = 0x0009;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GameVersion {
-    Ww124,
     Ww132,
 }
 
 impl GameVersion {
     fn from_metadata(product: &str, _lang_id: u16, version: &str) -> Option<Self> {
-        if product.contains("NIGHTREIGN") || version == "1.3.2.0" || version == "1.2.4.0" {
+        if product.contains("NIGHTREIGN")
+            || version.starts_with("1.3.")
+            || version.starts_with("1.2.")
+        {
             Some(Self::Ww132)
         } else {
-            Some(Self::Ww132)
+            None
         }
     }
 }
@@ -74,7 +74,7 @@ fn detect_version_and_get_rvas(module: &PeView) -> Option<RvaBundle> {
 impl RvaBundle {
     fn for_version(version: GameVersion) -> Self {
         match version {
-            GameVersion::Ww124 | GameVersion::Ww132 => rva_data::RVAS,
+            GameVersion::Ww132 => rva_data::RVAS,
         }
     }
 }
