@@ -1,7 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use fromsoftware_shared::{F32Matrix4x4, F32Vector4, FromStatic};
@@ -9,7 +8,7 @@ use nalgebra_glm as glm;
 use nightreign::cs::{CSCam, CSCamera};
 use windows::core::PCSTR;
 use windows::Win32::Foundation::{BOOL, HINSTANCE, POINT};
-use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA};
+use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 use windows::Win32::System::Memory::{VirtualProtect, PAGE_PROTECTION_FLAGS, PAGE_READWRITE};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -21,21 +20,6 @@ extern "system" {
 
 const SM_CXSCREEN: i32 = 0;
 const SM_CYSCREEN: i32 = 1;
-
-pub const XINPUT_GAMEPAD_DPAD_UP: u16 = 0x0001;
-pub const XINPUT_GAMEPAD_DPAD_DOWN: u16 = 0x0002;
-pub const XINPUT_GAMEPAD_DPAD_LEFT: u16 = 0x0004;
-pub const XINPUT_GAMEPAD_DPAD_RIGHT: u16 = 0x0008;
-pub const XINPUT_GAMEPAD_START: u16 = 0x0010;
-pub const XINPUT_GAMEPAD_BACK: u16 = 0x0020;
-pub const XINPUT_GAMEPAD_LEFT_THUMB: u16 = 0x0040;  // L3
-pub const XINPUT_GAMEPAD_RIGHT_THUMB: u16 = 0x0080; // R3
-pub const XINPUT_GAMEPAD_LEFT_SHOULDER: u16 = 0x0100; // LB
-pub const XINPUT_GAMEPAD_RIGHT_SHOULDER: u16 = 0x0200; // RB
-pub const XINPUT_GAMEPAD_A: u16 = 0x1000;
-pub const XINPUT_GAMEPAD_B: u16 = 0x2000;
-pub const XINPUT_GAMEPAD_X: u16 = 0x4000;
-pub const XINPUT_GAMEPAD_Y: u16 = 0x8000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
@@ -61,9 +45,283 @@ pub type FnXInputGetState = unsafe extern "system" fn(u32, *mut XINPUT_STATE) ->
 static FREECAM_ACTIVE: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_XINPUT_GET_STATE: AtomicUsize = AtomicUsize::new(0);
 static ORIGINAL_SET_CURSOR_POS: AtomicUsize = AtomicUsize::new(0);
-static DIRECT_XINPUT_GET_STATE: AtomicUsize = AtomicUsize::new(0);
 
-static LATEST_REAL_GAMEPAD: Mutex<Option<XINPUT_STATE>> = Mutex::new(None);
+static OVERLAY_HWND: AtomicUsize = AtomicUsize::new(0);
+static OVERLAY_VISIBLE: AtomicBool = AtomicBool::new(true);
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RECT {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[repr(C)]
+struct PAINTSTRUCT {
+    hdc: isize,
+    f_erase: BOOL,
+    rc_paint: RECT,
+    f_restore: BOOL,
+    f_inc_update: BOOL,
+    rgb_reserved: [u8; 32],
+}
+
+#[repr(C)]
+struct MSG {
+    hwnd: isize,
+    message: u32,
+    w_param: usize,
+    l_param: isize,
+    time: u32,
+    pt: POINT,
+    l_private: u32,
+}
+
+#[repr(C)]
+struct WNDCLASSEXW {
+    cb_size: u32,
+    style: u32,
+    lpfn_wnd_proc: Option<unsafe extern "system" fn(isize, u32, usize, isize) -> isize>,
+    cb_cls_extra: i32,
+    cb_wnd_extra: i32,
+    h_instance: isize,
+    h_icon: isize,
+    h_cursor: isize,
+    h_br_background: isize,
+    lpsz_menu_name: *const u16,
+    lpsz_class_name: *const u16,
+    h_icon_sm: isize,
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn RegisterClassExW(lpwcx: *const WNDCLASSEXW) -> u16;
+    fn CreateWindowExW(
+        dwExStyle: u32,
+        lpClassName: *const u16,
+        lpWindowName: *const u16,
+        dwStyle: u32,
+        X: i32,
+        Y: i32,
+        nWidth: i32,
+        nHeight: i32,
+        hWndParent: isize,
+        hMenu: isize,
+        hInstance: isize,
+        lpParam: *mut std::ffi::c_void,
+    ) -> isize;
+    fn DefWindowProcW(hWnd: isize, Msg: u32, wParam: usize, lParam: isize) -> isize;
+    fn ShowWindow(hWnd: isize, nCmdShow: i32) -> BOOL;
+    fn UpdateWindow(hWnd: isize) -> BOOL;
+    fn SetLayeredWindowAttributes(hWnd: isize, crKey: u32, bAlpha: u8, dwFlags: u32) -> BOOL;
+    fn BeginPaint(hWnd: isize, lpPaint: *mut PAINTSTRUCT) -> isize;
+    fn EndPaint(hWnd: isize, lpPaint: *const PAINTSTRUCT) -> BOOL;
+    fn GetMessageW(lpMsg: *mut MSG, hWnd: isize, wMsgFilterMin: u32, wMsgFilterMax: u32) -> BOOL;
+    fn TranslateMessage(lpMsg: *const MSG) -> BOOL;
+    fn DispatchMessageW(lpMsg: *const MSG) -> isize;
+    fn FillRect(hDC: isize, lprc: *const RECT, hbr: isize) -> i32;
+    fn FrameRect(hDC: isize, lprc: *const RECT, hbr: isize) -> i32;
+    fn DrawTextW(hDC: isize, lpchText: *const u16, cchText: i32, lprc: *mut RECT, format: u32) -> i32;
+    fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> BOOL;
+}
+
+#[link(name = "gdi32")]
+extern "system" {
+    fn CreateSolidBrush(color: u32) -> isize;
+    fn SelectObject(hdc: isize, hgdiobj: isize) -> isize;
+    fn DeleteObject(ho: isize) -> BOOL;
+    fn SetBkMode(hdc: isize, mode: i32) -> i32;
+    fn SetTextColor(hdc: isize, color: u32) -> u32;
+    fn CreateFontW(
+        cHeight: i32,
+        cWidth: i32,
+        cEscapement: i32,
+        cOrientation: i32,
+        cWeight: i32,
+        bItalic: u32,
+        bUnderline: u32,
+        bStrikeOut: u32,
+        iCharSet: u32,
+        iOutPrecision: u32,
+        iClipPrecision: u32,
+        iQuality: u32,
+        iPitchAndFamily: u32,
+        pszFaceName: *const u16,
+    ) -> isize;
+}
+
+fn rgb(r: u8, g: u8, b: u8) -> u32 {
+    (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)
+}
+
+fn to_wide_null(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+unsafe extern "system" fn overlay_wnd_proc(
+    hwnd: isize,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+) -> isize {
+    match msg {
+        0x0014 => 1,
+        0x000F => {
+            let mut ps = std::mem::zeroed::<PAINTSTRUCT>();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            if hdc != 0 {
+                render_overlay_ui(hdc);
+                EndPaint(hwnd, &ps);
+            }
+            0
+        }
+        0x0002 => 0,
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+unsafe fn render_overlay_ui(hdc: isize) {
+    let full_rc = RECT { left: 0, top: 0, right: 330, bottom: 440 };
+    let bg_brush = CreateSolidBrush(rgb(16, 18, 24));
+    FillRect(hdc, &full_rc, bg_brush);
+    DeleteObject(bg_brush);
+
+    let border_brush = CreateSolidBrush(rgb(55, 65, 85));
+    FrameRect(hdc, &full_rc, border_brush);
+    DeleteObject(border_brush);
+
+    SetBkMode(hdc, 1);
+
+    let segoe = to_wide_null("Segoe UI");
+    let font_title = CreateFontW(19, 0, 0, 0, 700, 0, 0, 0, 1, 0, 0, 5, 0, segoe.as_ptr());
+    let font_sub = CreateFontW(13, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, segoe.as_ptr());
+    let font_bold = CreateFontW(14, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, segoe.as_ptr());
+    let font_norm = CreateFontW(14, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, segoe.as_ptr());
+
+    SelectObject(hdc, font_title);
+    SetTextColor(hdc, rgb(240, 195, 75));
+    let title_w = to_wide_null("FREECAM GUIDE");
+    let mut rc_title = RECT { left: 16, top: 12, right: 314, bottom: 32 };
+    DrawTextW(hdc, title_w.as_ptr(), (title_w.len() - 1) as i32, &mut rc_title, 0x00000000 | 0x00000020);
+
+    SelectObject(hdc, font_sub);
+    SetTextColor(hdc, rgb(150, 160, 175));
+    let sub_w = to_wide_null("[H] or [F2] to Toggle Guide");
+    let mut rc_sub = RECT { left: 16, top: 32, right: 314, bottom: 48 };
+    DrawTextW(hdc, sub_w.as_ptr(), (sub_w.len() - 1) as i32, &mut rc_sub, 0x00000000 | 0x00000020);
+
+    let div_brush = CreateSolidBrush(rgb(45, 55, 72));
+    let div1_rc = RECT { left: 16, top: 52, right: 314, bottom: 53 };
+    FillRect(hdc, &div1_rc, div_brush);
+
+    let items = [
+        ("P / F1", "Toggle Freecam"),
+        ("W, A, S, D", "Move Camera"),
+        ("Space / Ctrl", "Fly Up / Down"),
+        ("Shift / Alt", "Boost / Slow Speed"),
+        ("Mouse", "Look Around (360)"),
+        ("Q / E  (R)", "Roll Camera (Reset)"),
+        ("[ / ]", "Adjust FOV (Zoom)"),
+        ("1 / 2", "Adjust Base Speed"),
+        ("T", "Teleport Character"),
+        ("Home", "Rescue to Origin"),
+    ];
+
+    let mut y = 60;
+    for (key, desc) in items {
+        SelectObject(hdc, font_bold);
+        SetTextColor(hdc, rgb(225, 230, 240));
+        let key_w = to_wide_null(key);
+        let mut rc_k = RECT { left: 16, top: y, right: 135, bottom: y + 24 };
+        DrawTextW(hdc, key_w.as_ptr(), (key_w.len() - 1) as i32, &mut rc_k, 0x00000000 | 0x00000020 | 0x00000004);
+
+        SelectObject(hdc, font_norm);
+        SetTextColor(hdc, rgb(165, 175, 195));
+        let desc_w = to_wide_null(desc);
+        let mut rc_d = RECT { left: 135, top: y, right: 314, bottom: y + 24 };
+        DrawTextW(hdc, desc_w.as_ptr(), (desc_w.len() - 1) as i32, &mut rc_d, 0x00000000 | 0x00000020 | 0x00000004);
+
+        y += 32;
+    }
+
+    let div2_rc = RECT { left: 16, top: y + 4, right: 314, bottom: y + 5 };
+    FillRect(hdc, &div2_rc, div_brush);
+    DeleteObject(div_brush);
+
+    SelectObject(hdc, font_sub);
+    SetTextColor(hdc, rgb(80, 200, 150));
+    let footer_w = to_wide_null("Keyboard & Mouse Mode Active");
+    let mut rc_footer = RECT { left: 16, top: y + 10, right: 314, bottom: y + 28 };
+    DrawTextW(hdc, footer_w.as_ptr(), (footer_w.len() - 1) as i32, &mut rc_footer, 0x00000000 | 0x00000020 | 0x00000004);
+
+    DeleteObject(font_title);
+    DeleteObject(font_sub);
+    DeleteObject(font_bold);
+    DeleteObject(font_norm);
+}
+
+fn start_overlay_thread() {
+    std::thread::spawn(|| {
+        unsafe {
+            let class_name = to_wide_null("NightreignFreecamOSD");
+            let title = to_wide_null("Freecam Guide");
+
+            let mut wc = std::mem::zeroed::<WNDCLASSEXW>();
+            wc.cb_size = std::mem::size_of::<WNDCLASSEXW>() as u32;
+            wc.style = 0x0003;
+            wc.lpfn_wnd_proc = Some(overlay_wnd_proc);
+            wc.lpsz_class_name = class_name.as_ptr();
+
+            RegisterClassExW(&wc);
+
+            let screen_w = GetSystemMetrics(SM_CXSCREEN);
+            let overlay_w = 330;
+            let overlay_h = 440;
+            let x = if screen_w > (overlay_w + 30) {
+                screen_w - overlay_w - 24
+            } else {
+                24
+            };
+            let y = 24;
+
+            let ex_style = 0x00000008 | 0x00080000 | 0x00000020 | 0x08000000 | 0x00000080;
+            let style = 0x80000000;
+
+            let hwnd = CreateWindowExW(
+                ex_style,
+                class_name.as_ptr(),
+                title.as_ptr(),
+                style,
+                x,
+                y,
+                overlay_w,
+                overlay_h,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+            );
+
+            if hwnd == 0 {
+                return;
+            }
+
+            SetLayeredWindowAttributes(hwnd, 0, 215, 0x00000002);
+            OVERLAY_HWND.store(hwnd as usize, Ordering::SeqCst);
+
+            ShowWindow(hwnd, 4);
+            UpdateWindow(hwnd);
+
+            let mut msg = std::mem::zeroed::<MSG>();
+            while GetMessageW(&mut msg, 0, 0, 0).0 > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    });
+}
 
 fn log_msg(msg: &str) {
     if let Ok(mut f) = OpenOptions::new()
@@ -101,18 +359,12 @@ unsafe extern "system" fn hooked_xinput_get_state(
 ) -> u32 {
     let orig = ORIGINAL_XINPUT_GET_STATE.load(Ordering::Relaxed);
     if orig == 0 {
-        return 1167; // ERROR_DEVICE_NOT_CONNECTED
+        return 1167;
     }
     let orig_fn: FnXInputGetState = std::mem::transmute(orig);
     let res = orig_fn(dw_user_index, p_state);
     if res != 0 || p_state.is_null() {
         return res;
-    }
-
-    if dw_user_index == 0 {
-        if let Ok(mut lock) = LATEST_REAL_GAMEPAD.lock() {
-            *lock = Some(*p_state);
-        }
     }
 
     if FREECAM_ACTIVE.load(Ordering::Relaxed) {
@@ -172,7 +424,6 @@ unsafe fn install_iat_hooks() {
                 *xinput_slot = hooked_xinput_get_state as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(xinput_slot as *const _, 8, old_protect, &mut dummy);
-                log_msg(&format!("Hooked XInput at 0x{:X}", base + 0xD8FC9C));
             }
         }
     }
@@ -187,49 +438,7 @@ unsafe fn install_iat_hooks() {
                 *cursor_slot = hooked_set_cursor_pos as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(cursor_slot as *const _, 8, old_protect, &mut dummy);
-                log_msg(&format!("Hooked SetCursorPos at 0x{:X}", base + 0xD8F93C));
             }
-        }
-    }
-}
-
-fn init_direct_xinput() {
-    unsafe {
-        let mut h = LoadLibraryA(PCSTR(b"xinput1_4.dll\0".as_ptr()));
-        if h.is_err() {
-            h = LoadLibraryA(PCSTR(b"xinput1_3.dll\0".as_ptr()));
-        }
-        if h.is_err() {
-            h = LoadLibraryA(PCSTR(b"xinput9_1_0.dll\0".as_ptr()));
-        }
-        if let Ok(mod_handle) = h {
-            if let Some(proc) = GetProcAddress(mod_handle, PCSTR(b"XInputGetState\0".as_ptr())) {
-                DIRECT_XINPUT_GET_STATE.store(proc as usize, Ordering::SeqCst);
-                log_msg("Direct XInput loaded");
-            }
-        }
-    }
-}
-
-fn poll_gamepad_direct(dw_user_index: u32) -> Option<XINPUT_STATE> {
-    let proc_addr = DIRECT_XINPUT_GET_STATE.load(Ordering::Relaxed);
-    let target = if proc_addr != 0 {
-        proc_addr
-    } else {
-        ORIGINAL_XINPUT_GET_STATE.load(Ordering::Relaxed)
-    };
-
-    if target == 0 {
-        return None;
-    }
-
-    unsafe {
-        let get_state: FnXInputGetState = std::mem::transmute(target);
-        let mut state = XINPUT_STATE::default();
-        if get_state(dw_user_index, &mut state) == 0 {
-            Some(state)
-        } else {
-            None
         }
     }
 }
@@ -406,8 +615,8 @@ pub unsafe extern "C" fn DllMain(_hmodule: HINSTANCE, reason: u32) -> bool {
 
     log_msg("Nightreign freecam module loaded.");
 
-    init_direct_xinput();
     install_iat_hooks();
+    start_overlay_thread();
 
     std::thread::spawn(|| {
         let res = std::panic::catch_unwind(|| {
@@ -443,30 +652,15 @@ fn get_primary_camera(camera: &CSCamera) -> Option<*mut CSCam> {
     None
 }
 
-fn apply_deadzone_and_curve(raw_x: i16, raw_y: i16, deadzone: f32) -> (f32, f32) {
-    let norm_x = raw_x as f32 / 32767.0;
-    let norm_y = raw_y as f32 / 32767.0;
-    let mag = (norm_x * norm_x + norm_y * norm_y).sqrt();
-
-    if mag < deadzone {
-        return (0.0, 0.0);
-    }
-
-    let normalized_mag = ((mag - deadzone) / (1.0 - deadzone)).min(1.0);
-    let curved_mag = normalized_mag.powf(1.6);
-
-    let factor = curved_mag / mag;
-    (norm_x * factor, norm_y * factor)
-}
-
 fn run_freecam_loop() {
     let mut p_key_down = false;
     let mut f1_key_down = false;
+    let mut h_key_down = false;
+    let mut f2_key_down = false;
     let mut r_key_down = false;
     let mut t_key_down = false;
     let mut backspace_down = false;
     let mut home_down = false;
-    let mut controller_toggle_down = false;
     let mut freecam_enabled = false;
 
     let mut cam_pos = glm::vec3(0.0f32, 0.0, 0.0);
@@ -512,16 +706,24 @@ fn run_freecam_loop() {
 
         let toggle_p = is_key_pressed(0x50, &mut p_key_down);
         let toggle_f1 = is_key_pressed(0x70, &mut f1_key_down);
+        let toggle_osd = is_key_pressed(0x48, &mut h_key_down) || is_key_pressed(0x71, &mut f2_key_down);
         let reset_r = is_key_pressed(0x52, &mut r_key_down);
 
-        let gamepad_state = {
-            let lock_state = LATEST_REAL_GAMEPAD.lock().ok().and_then(|g| *g);
-            if lock_state.is_some() {
-                lock_state
-            } else {
-                poll_gamepad_direct(0)
+        if toggle_osd {
+            let was_vis = OVERLAY_VISIBLE.fetch_xor(true, Ordering::SeqCst);
+            let now_vis = !was_vis;
+            let hwnd = OVERLAY_HWND.load(Ordering::Relaxed);
+            if hwnd != 0 {
+                unsafe {
+                    if now_vis {
+                        ShowWindow(hwnd as isize, 4);
+                        SetWindowPos(hwnd as isize, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+                    } else {
+                        ShowWindow(hwnd as isize, 0);
+                    }
+                }
             }
-        };
+        }
 
         let camera_res = unsafe { <CSCamera as FromStatic>::instance() };
         let camera = match camera_res {
@@ -536,16 +738,8 @@ fn run_freecam_loop() {
             log_msg(&format!("CSCamera resolved at {:p}", camera));
         }
 
-        let controller_rescue = if let Some(ref gp) = gamepad_state {
-            let btns = gp.gamepad.w_buttons;
-            (btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0) && (btns & XINPUT_GAMEPAD_BACK != 0)
-        } else {
-            false
-        };
-
         let rescue_home = is_key_pressed(0x24, &mut home_down)
-            || is_key_pressed(0x08, &mut backspace_down)
-            || controller_rescue;
+            || is_key_pressed(0x08, &mut backspace_down);
 
         if rescue_home {
             if let Some(origin) = spawn_origin_pos {
@@ -566,16 +760,6 @@ fn run_freecam_loop() {
             }
         }
 
-        let mut toggle_controller = false;
-        if let Some(ref gp) = gamepad_state {
-            let l3_r3 = (gp.gamepad.w_buttons & XINPUT_GAMEPAD_LEFT_THUMB != 0)
-                && (gp.gamepad.w_buttons & XINPUT_GAMEPAD_RIGHT_THUMB != 0);
-            if l3_r3 && !controller_toggle_down {
-                toggle_controller = true;
-            }
-            controller_toggle_down = l3_r3;
-        }
-
         let primary_ptr = match get_primary_camera(camera) {
             Some(p) => p,
             None => {
@@ -585,7 +769,7 @@ fn run_freecam_loop() {
 
         let primary_cam = unsafe { &*primary_ptr };
 
-        if toggle_p || toggle_f1 || toggle_controller {
+        if toggle_p || toggle_f1 {
             freecam_enabled = !freecam_enabled;
             FREECAM_ACTIVE.store(freecam_enabled, Ordering::SeqCst);
 
@@ -625,19 +809,16 @@ fn run_freecam_loop() {
                 camera.camera_mask = 0b00100010;
                 let init_matrix = primary_cam.matrix;
                 update_all_cameras(camera, init_matrix, cam_fov);
+
+                let hwnd = OVERLAY_HWND.load(Ordering::Relaxed);
+                if hwnd != 0 && OVERLAY_VISIBLE.load(Ordering::Relaxed) {
+                    unsafe {
+                        SetWindowPos(hwnd as isize, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+                    }
+                }
             } else {
                 log_msg("Freecam disabled");
                 camera.camera_mask = 0;
-
-                if is_key_down(0x10) {
-                    if let Some(origin) = spawn_origin_pos {
-                        teleport_player_clean(origin);
-                        log_msg(&format!(
-                            "Player returned to origin: ({:.2}, {:.2}, {:.2})",
-                            origin[0], origin[1], origin[2]
-                        ));
-                    }
-                }
 
                 frozen_player_pos = None;
                 mouse_initialized = false;
@@ -654,13 +835,7 @@ fn run_freecam_loop() {
             teleport_player_clean(freeze_pos);
         }
 
-        let teleport_to_cam = is_key_pressed(0x54, &mut t_key_down)
-            || (if let Some(ref gp) = gamepad_state {
-                let btns = gp.gamepad.w_buttons;
-                (btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0) && (btns & XINPUT_GAMEPAD_Y != 0)
-            } else {
-                false
-            });
+        let teleport_to_cam = is_key_pressed(0x54, &mut t_key_down);
 
         if teleport_to_cam {
             let target_pos = [cam_pos.x, cam_pos.y, cam_pos.z];
@@ -694,25 +869,6 @@ fn run_freecam_loop() {
         }
         if is_key_down(0x32) {
             base_speed = (base_speed + 6.0 * dt).clamp(1.5, 120.0);
-        }
-
-        if let Some(ref gp) = gamepad_state {
-            let btns = gp.gamepad.w_buttons;
-            if (btns & XINPUT_GAMEPAD_B != 0) || (btns & XINPUT_GAMEPAD_LEFT_THUMB != 0) {
-                speed_multiplier *= 3.5;
-            }
-            if (btns & XINPUT_GAMEPAD_A != 0) || (btns & XINPUT_GAMEPAD_X != 0) {
-                speed_multiplier *= 0.25;
-            }
-
-            if btns & XINPUT_GAMEPAD_LEFT_SHOULDER == 0 {
-                if btns & XINPUT_GAMEPAD_DPAD_UP != 0 {
-                    base_speed = (base_speed + 6.0 * dt).clamp(1.5, 120.0);
-                }
-                if btns & XINPUT_GAMEPAD_DPAD_DOWN != 0 {
-                    base_speed = (base_speed - 6.0 * dt).clamp(1.5, 120.0);
-                }
-            }
         }
 
         let move_speed = base_speed * speed_multiplier;
@@ -764,16 +920,6 @@ fn run_freecam_loop() {
             }
         }
 
-        if let Some(ref gp) = gamepad_state {
-            let (look_x, look_y) =
-                apply_deadzone_and_curve(gp.gamepad.s_thumb_rx, gp.gamepad.s_thumb_ry, 0.18);
-            if look_x.abs() > 0.001 || look_y.abs() > 0.001 {
-                let stick_sens = 2.4f32;
-                cam_yaw += look_x * stick_sens * dt;
-                cam_pitch -= look_y * stick_sens * dt;
-            }
-        }
-
         if is_key_down(0x25) || is_key_down(0x64) {
             cam_yaw -= rot_speed * dt;
         }
@@ -802,29 +948,6 @@ fn run_freecam_loop() {
         }
         if is_key_down(0xDD) {
             cam_fov = (cam_fov + 25.0 * dt).clamp(5.0, 130.0);
-        }
-
-        if let Some(ref gp) = gamepad_state {
-            let btns = gp.gamepad.w_buttons;
-
-            if btns & XINPUT_GAMEPAD_DPAD_LEFT != 0 {
-                cam_roll -= rot_speed * 0.8 * dt;
-            }
-            if btns & XINPUT_GAMEPAD_DPAD_RIGHT != 0 {
-                cam_roll += rot_speed * 0.8 * dt;
-            }
-            if (btns & XINPUT_GAMEPAD_RIGHT_THUMB != 0) && (btns & XINPUT_GAMEPAD_LEFT_THUMB == 0) {
-                cam_roll = 0.0;
-            }
-
-            if btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0 {
-                if btns & XINPUT_GAMEPAD_DPAD_UP != 0 {
-                    cam_fov = (cam_fov - 20.0 * dt).clamp(5.0, 130.0);
-                }
-                if btns & XINPUT_GAMEPAD_DPAD_DOWN != 0 {
-                    cam_fov = (cam_fov + 20.0 * dt).clamp(5.0, 130.0);
-                }
-            }
         }
 
         cam_pitch = cam_pitch.clamp(-1.55, 1.55);
@@ -868,37 +991,6 @@ fn run_freecam_loop() {
         }
         if is_key_down(0x11) || is_key_down(0x43) {
             move_dir -= world_up;
-        }
-
-        if let Some(ref gp) = gamepad_state {
-            let (stick_x, stick_y) =
-                apply_deadzone_and_curve(gp.gamepad.s_thumb_lx, gp.gamepad.s_thumb_ly, 0.18);
-            move_dir += forward * stick_y;
-            move_dir += right * stick_x;
-
-            let trig_deadzone = 20.0f32;
-            let lt = if (gp.gamepad.b_left_trigger as f32) > trig_deadzone {
-                ((gp.gamepad.b_left_trigger as f32 - trig_deadzone) / (255.0 - trig_deadzone))
-                    .powf(1.4)
-            } else {
-                0.0
-            };
-            let rt = if (gp.gamepad.b_right_trigger as f32) > trig_deadzone {
-                ((gp.gamepad.b_right_trigger as f32 - trig_deadzone) / (255.0 - trig_deadzone))
-                    .powf(1.4)
-            } else {
-                0.0
-            };
-
-            let vertical_speed = rt - lt;
-            if vertical_speed.abs() > 0.001 {
-                move_dir += world_up * vertical_speed;
-            }
-
-            let btns = gp.gamepad.w_buttons;
-            if btns & XINPUT_GAMEPAD_RIGHT_SHOULDER != 0 {
-                move_dir += world_up * 1.0;
-            }
         }
 
         if glm::length(&move_dir) > 0.001 {

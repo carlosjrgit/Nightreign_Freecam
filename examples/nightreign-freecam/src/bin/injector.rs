@@ -226,16 +226,18 @@ fn main() {
         CloseHandle(process);
 
         println!("Freecam attached successfully.\n");
-        println!("Controls:");
-        println!("  P / F1 / L3+R3    : Toggle Freecam");
+        println!("Controls (Keyboard & Mouse):");
+        println!("  P / F1            : Toggle Freecam");
         println!("  W, A, S, D        : Move camera");
-        println!("  Space / Ctrl      : Up / Down");
+        println!("  Space / Ctrl      : Fly Up / Down");
         println!("  Shift / Alt       : Boost / Slow speed");
-        println!("  Mouse / R-Stick   : Look around (360)");
+        println!("  Mouse             : Look around (360)");
         println!("  Q / E (R to reset): Roll camera");
-        println!("  [ / ]             : Adjust FOV");
-        println!("  T / LB+Y          : Teleport character to camera & land");
+        println!("  [ / ]             : Adjust FOV (Zoom)");
+        println!("  1 / 2             : Adjust Base Speed");
+        println!("  T                 : Teleport character to camera & land");
         println!("  Home / Backspace  : Emergency return to spawn origin");
+        println!("  H / F2            : Toggle in-game transparent guide");
         println!("\nPress Enter to exit...");
         wait_for_enter();
     }
