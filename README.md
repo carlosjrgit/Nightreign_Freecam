@@ -10,16 +10,16 @@ Designed for virtual photography, cinematic content creation, and world inspecti
 
 ## Live Previews
 
-### 🕹️ 6-Axis Freecam Navigation & Translucent OSD Guide
+### 6-Axis Freecam Navigation & Translucent OSD Guide
 ![Freecam Flight & OSD](assets/demo_freecam_flight.webp)
 
-### ⚡ Safe Teleportation & Landing (`T`)
+### Safe Teleportation & Landing (`T`)
 ![Character Teleport](assets/demo_teleport.webp)
 
-### 🔄 Unconstrained 360° Roll & Dutch Angles (`Q` / `E`)
+### Unconstrained 360° Roll & Dutch Angles (`Q` / `E`)
 ![Camera Roll](assets/demo_camera_roll.webp)
 
-### 🏰 World Inspection & High-Altitude Flight
+### World Inspection & High-Altitude Flight
 ![World Exploration](assets/demo_exploration.webp)
 
 ---
@@ -178,5 +178,5 @@ The compiled binaries will be generated at:
 ---
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=MXerz9vuJdk"><strong>👉 veja a demonstração completa aqui!</strong></a>
+  <a href="https://www.youtube.com/watch?v=MXerz9vuJdk"><strong>👉 full demonstration here!</strong></a>
 </p>
