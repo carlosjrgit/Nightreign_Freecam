@@ -1,2 +1,30 @@
+# Build artifacts
 /target
 crates/game/target
+*.exe
+*.dll
+*.pdb
+*.lib
+*.exp
+*.d
+
+# Logs & debugging
+*.log
+freecam.log
+
+# Environment & local configuration
+.env
+.env.*
+*.local
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating system files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
