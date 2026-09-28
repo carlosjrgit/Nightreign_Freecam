@@ -125,6 +125,17 @@ extern "system" {
     fn FrameRect(hDC: isize, lprc: *const RECT, hbr: isize) -> i32;
     fn DrawTextW(hDC: isize, lpchText: *const u16, cchText: i32, lprc: *mut RECT, format: u32) -> i32;
     fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> BOOL;
+    fn EnumWindows(lpEnumFunc: Option<unsafe extern "system" fn(isize, isize) -> BOOL>, lParam: isize) -> BOOL;
+    fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
+    fn IsWindowVisible(hWnd: isize) -> BOOL;
+    fn DestroyWindow(hWnd: isize) -> BOOL;
+    fn PostQuitMessage(nExitCode: i32);
+    fn SetTimer(hWnd: isize, nIDEvent: usize, uElapse: u32, lpTimerFunc: Option<unsafe extern "system" fn(isize, u32, usize, u32)>) -> usize;
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentProcessId() -> u32;
 }
 
 #[link(name = "gdi32")]
@@ -177,13 +188,41 @@ unsafe extern "system" fn overlay_wnd_proc(
             }
             0
         }
-        0x0002 => 0,
+        0x0113 => {
+            let my_pid = GetCurrentProcessId();
+
+            unsafe extern "system" fn check_game_window(w: isize, lparam: isize) -> BOOL {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(w, &mut pid);
+                let my_pid = *(lparam as *const u32);
+                if pid == my_pid && w != (OVERLAY_HWND.load(Ordering::Relaxed) as isize) {
+                    if IsWindowVisible(w).0 != 0 {
+                        let found_ptr = (lparam as *mut u32).add(1) as *mut bool;
+                        *found_ptr = true;
+                        return BOOL(0);
+                    }
+                }
+                BOOL(1)
+            }
+
+            let mut ctx: [u32; 2] = [my_pid, 0];
+            EnumWindows(Some(check_game_window), ctx.as_mut_ptr() as isize);
+            if ctx[1] == 0 {
+                DestroyWindow(hwnd);
+                PostQuitMessage(0);
+            }
+            0
+        }
+        0x0002 => {
+            PostQuitMessage(0);
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
 
 unsafe fn render_overlay_ui(hdc: isize) {
-    let full_rc = RECT { left: 0, top: 0, right: 330, bottom: 440 };
+    let full_rc = RECT { left: 0, top: 0, right: 330, bottom: 370 };
     let bg_brush = CreateSolidBrush(rgb(16, 18, 24));
     FillRect(hdc, &full_rc, bg_brush);
     DeleteObject(bg_brush);
@@ -223,8 +262,6 @@ unsafe fn render_overlay_ui(hdc: isize) {
         ("Shift / Alt", "Boost / Slow Speed"),
         ("Mouse", "Look Around (360)"),
         ("Q / E  (R)", "Roll Camera (Reset)"),
-        ("[ / ]", "Adjust FOV (Zoom)"),
-        ("1 / 2", "Adjust Base Speed"),
         ("T", "Teleport Character"),
         ("Home", "Rescue to Origin"),
     ];
@@ -278,7 +315,7 @@ fn start_overlay_thread() {
 
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let overlay_w = 330;
-            let overlay_h = 440;
+            let overlay_h = 370;
             let x = if screen_w > (overlay_w + 30) {
                 screen_w - overlay_w - 24
             } else {
@@ -310,6 +347,8 @@ fn start_overlay_thread() {
 
             SetLayeredWindowAttributes(hwnd, 0, 215, 0x00000002);
             OVERLAY_HWND.store(hwnd as usize, Ordering::SeqCst);
+
+            SetTimer(hwnd, 1, 250, None);
 
             ShowWindow(hwnd, 4);
             UpdateWindow(hwnd);
@@ -609,6 +648,14 @@ pub unsafe extern "C" fn snapshot_camera_state(ctx: *mut u8) -> u32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn DllMain(_hmodule: HINSTANCE, reason: u32) -> bool {
+    if reason == 0 {
+        let hwnd = OVERLAY_HWND.load(Ordering::SeqCst);
+        if hwnd != 0 {
+            DestroyWindow(hwnd as isize);
+            PostQuitMessage(0);
+        }
+        return true;
+    }
     if reason != 1 {
         return true;
     }
@@ -668,7 +715,7 @@ fn run_freecam_loop() {
     let mut cam_pitch = 0.0f32;
     let mut cam_roll = 0.0f32;
     let mut cam_fov = 45.0f32;
-    let mut base_speed = 12.0f32;
+    let base_speed = 12.0f32;
 
     let mut spawn_origin_pos: Option<[f32; 3]> = None;
     let mut frozen_player_pos: Option<[f32; 3]> = None;
@@ -864,12 +911,6 @@ fn run_freecam_loop() {
             speed_multiplier *= 0.25;
         }
 
-        if is_key_down(0x31) {
-            base_speed = (base_speed - 6.0 * dt).clamp(1.5, 120.0);
-        }
-        if is_key_down(0x32) {
-            base_speed = (base_speed + 6.0 * dt).clamp(1.5, 120.0);
-        }
 
         let move_speed = base_speed * speed_multiplier;
         let rot_speed = 2.0f32;
@@ -943,12 +984,6 @@ fn run_freecam_loop() {
             cam_roll = 0.0;
         }
 
-        if is_key_down(0xDB) {
-            cam_fov = (cam_fov - 25.0 * dt).clamp(5.0, 130.0);
-        }
-        if is_key_down(0xDD) {
-            cam_fov = (cam_fov + 25.0 * dt).clamp(5.0, 130.0);
-        }
 
         cam_pitch = cam_pitch.clamp(-1.55, 1.55);
 

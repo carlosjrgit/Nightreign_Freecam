@@ -233,8 +233,6 @@ fn main() {
         println!("  Shift / Alt       : Boost / Slow speed");
         println!("  Mouse             : Look around (360)");
         println!("  Q / E (R to reset): Roll camera");
-        println!("  [ / ]             : Adjust FOV (Zoom)");
-        println!("  1 / 2             : Adjust Base Speed");
         println!("  T                 : Teleport character to camera & land");
         println!("  Home / Backspace  : Emergency return to spawn origin");
         println!("  H / F2            : Toggle in-game transparent guide");
