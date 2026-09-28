@@ -8,6 +8,14 @@ Designed for virtual photography, cinematic content creation, and world inspecti
 
 ---
 
+## Video Demonstration
+
+[![Elden Ring Nightreign Freecam Mod Demo](https://img.youtube.com/vi/MXerz9vuJdk/maxresdefault.jpg)](https://www.youtube.com/watch?v=MXerz9vuJdk)
+
+> 🎬 **Watch the full demonstration on YouTube:** [Elden Ring Nightreign Freecam Mod Demo](https://www.youtube.com/watch?v=MXerz9vuJdk)
+
+---
+
 ## Supported Game Versions
 
 > [!IMPORTANT]
