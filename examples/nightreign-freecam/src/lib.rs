@@ -255,8 +255,8 @@ fn poll_gamepad_direct(dw_user_index: u32) -> Option<XINPUT_STATE> {
 // CONGELAMENTO DO JOGADOR (PLAYER FREEZE)
 // =========================================================================
 
-/// Retorna o ponteiro para as coordenadas X, Y, Z da física do jogador principal.
-fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
+/// Retorna o ponteiro para o módulo de física (CSChrPhysicsModule) do jogador principal.
+fn get_player_physics_ptr() -> Option<*mut u8> {
     // 1. Tenta via Singleton oficial WorldChrMan
     if let Ok(wcm) = unsafe { <nightreign::cs::WorldChrMan as FromStatic>::instance() } {
         let wcm_ptr = wcm as *mut nightreign::cs::WorldChrMan as *mut u8;
@@ -267,7 +267,7 @@ fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
                 if is_valid_ptr(modules_ptr) {
                     let physics_ptr = unsafe { *(modules_ptr.add(0x68) as *const *mut u8) };
                     if is_valid_ptr(physics_ptr) {
-                        return Some(unsafe { physics_ptr.add(0x70) as *mut [f32; 3] });
+                        return Some(physics_ptr);
                     }
                 }
             }
@@ -288,7 +288,7 @@ fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
                         if is_valid_ptr(modules) {
                             let physics = *(modules.add(0x68) as *const *mut u8);
                             if is_valid_ptr(physics) {
-                                return Some(physics.add(0x70) as *mut [f32; 3]);
+                                return Some(physics);
                             }
                         }
                     }
@@ -298,6 +298,32 @@ fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
     }
 
     None
+}
+
+/// Retorna o ponteiro para as coordenadas X, Y, Z da física do jogador principal.
+fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
+    get_player_physics_ptr().map(|p| unsafe { p.add(0x70) as *mut [f32; 3] })
+}
+
+/// Teleporta o jogador de forma 100% limpa, sem acumular inércia e sem ser arremessado.
+/// Atualiza tanto 'position' (0x70) quanto 'last_update_position' (0x80),
+/// ativa 'chr_proxy_pos_update_requested' (0x91 = 1) e zera 'root_motion' (0xd0 e 0xe0).
+fn teleport_player_clean(target: [f32; 3]) {
+    if let Some(phys) = get_player_physics_ptr() {
+        unsafe {
+            let pos = phys.add(0x70) as *mut [f32; 4];
+            let last_pos = phys.add(0x80) as *mut [f32; 4];
+            *pos = [target[0], target[1], target[2], 1.0];
+            *last_pos = [target[0], target[1], target[2], 1.0];
+            *phys.add(0x91) = 1; // Notifica o Havok que a posição foi forçada (Delta P = 0)
+            *(phys.add(0xd0) as *mut [f32; 4]) = [0.0, 0.0, 0.0, 0.0]; // root_motion
+            *(phys.add(0xe0) as *mut [f32; 4]) = [0.0, 0.0, 0.0, 0.0]; // root_motion_unk
+        }
+    } else if let Some(coords_ptr) = get_player_coords_ptr() {
+        unsafe {
+            *coords_ptr = target;
+        }
+    }
 }
 
 /// Retorna o ponteiro para o byte de flags de debug (incluindo No Dead) em ChrDataModule.
@@ -487,9 +513,8 @@ fn run_freecam_loop() {
     let mut cam_fov = 45.0f32;
     let mut base_speed = 12.0f32;
 
-    let mut initial_player_pos: Option<[f32; 3]> = None;
+    let mut spawn_origin_pos: Option<[f32; 3]> = None;
     let mut frozen_player_pos: Option<[f32; 3]> = None;
-    let mut grace_fall_timer = 0.0f32;
 
     let mut last_mouse_pos = POINT { x: 0, y: 0 };
     let mut mouse_initialized = false;
@@ -504,6 +529,27 @@ fn run_freecam_loop() {
         let now = Instant::now();
         let dt = (now - last_frame).as_secs_f32().clamp(0.0005, 0.05);
         last_frame = now;
+
+        // 1. Mantém No Dead permanentemente ativo:
+        // Elimina 100% dano e morte por queda. O personagem pode cair eternamente sem morrer.
+        // Ao tocar em qualquer superfície sólida ou objeto com colisão, pousa em pé normalmente.
+        set_player_no_dead(true);
+
+        // 2. Salva a posição de surgimento inicial (spawn) assim que as coordenadas forem válidas
+        if spawn_origin_pos.is_none() {
+            if let Some(phys) = get_player_physics_ptr() {
+                unsafe {
+                    let pos = *(phys.add(0x70) as *const [f32; 4]);
+                    if (pos[0].abs() > 0.1 || pos[1].abs() > 0.1 || pos[2].abs() > 0.1) && pos[0].is_finite() {
+                        spawn_origin_pos = Some([pos[0], pos[1], pos[2]]);
+                        log_msg(&format!(
+                            "[SPAWN REGISTRADO] Origem inicial de spawn salva: ({:.2}, {:.2}, {:.2})",
+                            pos[0], pos[1], pos[2]
+                        ));
+                    }
+                }
+            }
+        }
 
         // Leitura de teclas de alternância
         let toggle_p = is_key_pressed(0x50, &mut p_key_down);
@@ -520,17 +566,6 @@ fn run_freecam_loop() {
             }
         };
 
-        // Alternância pelo controle: L3 + R3
-        let mut toggle_controller = false;
-        if let Some(ref gp) = gamepad_state {
-            let l3_r3 = (gp.gamepad.w_buttons & XINPUT_GAMEPAD_LEFT_THUMB != 0)
-                && (gp.gamepad.w_buttons & XINPUT_GAMEPAD_RIGHT_THUMB != 0);
-            if l3_r3 && !controller_toggle_down {
-                toggle_controller = true;
-            }
-            controller_toggle_down = l3_r3;
-        }
-
         let camera_res = unsafe { <CSCamera as FromStatic>::instance() };
         let camera = match camera_res {
             Ok(cam) => cam,
@@ -542,6 +577,50 @@ fn run_freecam_loop() {
         if !logged_singleton {
             logged_singleton = true;
             log_msg(&format!("CSCamera encontrado em {:p}!", camera));
+        }
+
+        // 3. Botão de Resgate 24/7 (Home / Backspace / LB + Back no controle):
+        // Leva o boneco instantaneamente de volta para onde surgiu pela primeira vez!
+        // Se estiver caindo infinitamente no void ou preso, basta apertar HOME que ele retorna.
+        let controller_rescue = if let Some(ref gp) = gamepad_state {
+            let btns = gp.gamepad.w_buttons;
+            (btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0) && (btns & XINPUT_GAMEPAD_BACK != 0)
+        } else {
+            false
+        };
+
+        let rescue_home = is_key_pressed(0x24, &mut home_down)
+            || is_key_pressed(0x08, &mut backspace_down)
+            || controller_rescue;
+
+        if rescue_home {
+            if let Some(origin) = spawn_origin_pos {
+                log_msg(&format!(
+                    "[RESCUE HOME] Resgatando jogador para a origem inicial de spawn: ({:.2}, {:.2}, {:.2})",
+                    origin[0], origin[1], origin[2]
+                ));
+                teleport_player_clean(origin);
+                set_player_no_dead(true);
+
+                if freecam_enabled {
+                    freecam_enabled = false;
+                    FREECAM_ACTIVE.store(false, Ordering::SeqCst);
+                    camera.camera_mask = 0;
+                    frozen_player_pos = None;
+                    mouse_initialized = false;
+                }
+            }
+        }
+
+        // Alternância pelo controle: L3 + R3
+        let mut toggle_controller = false;
+        if let Some(ref gp) = gamepad_state {
+            let l3_r3 = (gp.gamepad.w_buttons & XINPUT_GAMEPAD_LEFT_THUMB != 0)
+                && (gp.gamepad.w_buttons & XINPUT_GAMEPAD_RIGHT_THUMB != 0);
+            if l3_r3 && !controller_toggle_down {
+                toggle_controller = true;
+            }
+            controller_toggle_down = l3_r3;
         }
 
         let primary_ptr = match get_primary_camera(camera) {
@@ -559,7 +638,7 @@ fn run_freecam_loop() {
             FREECAM_ACTIVE.store(freecam_enabled, Ordering::SeqCst);
 
             if freecam_enabled {
-                log_msg(">>> FREECAM ATIVADA! Pressione [T] para puxar o personagem e renderizar o cenário da câmera. <<<");
+                log_msg(">>> FREECAM ATIVADA! Pressione [T] para cair exatamente no local da câmera. <<<");
                 let m = &primary_cam.matrix;
                 cam_pos = glm::vec3(m.3 .0, m.3 .1, m.3 .2);
                 cam_fov = primary_cam.fov;
@@ -582,19 +661,16 @@ fn run_freecam_loop() {
                 mouse_initialized = true;
 
                 // Salva a posição física do personagem para congelá-lo imóvel
-                if let Some(pos_ptr) = get_player_coords_ptr() {
-                    let p_pos = unsafe { *pos_ptr };
+                if let Some(coords_ptr) = get_player_coords_ptr() {
+                    let p_pos = unsafe { *coords_ptr };
                     frozen_player_pos = Some(p_pos);
-                    initial_player_pos = Some(p_pos);
                     log_msg(&format!(
                         "Personagem imobilizado em: ({:.2}, {:.2}, {:.2})",
                         p_pos[0], p_pos[1], p_pos[2]
                     ));
                 }
 
-                // Liga No Dead enquanto a freecam estiver ativa
                 set_player_no_dead(true);
-
                 camera.camera_mask = 0b00100010;
                 let init_matrix = primary_cam.matrix;
                 update_all_cameras(camera, init_matrix, cam_fov);
@@ -604,48 +680,37 @@ fn run_freecam_loop() {
 
                 // Se Shift estiver pressionado durante o toggle de saída, restaura a posição inicial
                 if is_key_down(0x10) {
-                    if let (Some(pos_ptr), Some(orig)) = (get_player_coords_ptr(), initial_player_pos) {
-                        unsafe {
-                            *pos_ptr = orig;
-                        }
+                    if let Some(origin) = spawn_origin_pos {
+                        teleport_player_clean(origin);
                         log_msg(&format!(
-                            "Personagem retornado para a posição inicial: ({:.2}, {:.2}, {:.2})",
-                            orig[0], orig[1], orig[2]
+                            "Personagem retornado para a origem: ({:.2}, {:.2}, {:.2})",
+                            origin[0], origin[1], origin[2]
                         ));
                     }
                 }
 
                 frozen_player_pos = None;
                 mouse_initialized = false;
-                grace_fall_timer = 3.0; // 3 segundos de No Dead para pouso suave
             }
         }
 
         if !freecam_enabled {
-            if grace_fall_timer > 0.0 {
-                grace_fall_timer -= dt;
-                set_player_no_dead(true);
-            } else if grace_fall_timer <= 0.0 && grace_fall_timer > -1.0 {
-                grace_fall_timer = -2.0;
-                set_player_no_dead(false);
-            }
             continue;
         }
 
         camera.camera_mask = 0b00100010;
 
-        // Manter o personagem congelado no lugar atual (sem movimento contínuo = física Havok 100% estável)
-        if let (Some(pos_ptr), Some(freeze_pos)) = (get_player_coords_ptr(), frozen_player_pos) {
-            unsafe {
-                *pos_ptr = freeze_pos;
-            }
+        // Manter o personagem congelado no lugar atual com velocidade ZERO
+        if let Some(freeze_pos) = frozen_player_pos {
+            teleport_player_clean(freeze_pos);
         }
 
         // =====================================================================
         // TELEPORTE SOB DEMANDA (TECLA 'T' OU LB + Y NO CONTROLE)
         // =====================================================================
-        // Puxa o personagem para a posição atual da câmera. Isso faz o motor do jogo
-        // carregar imediatamente o cenário (LOD 0) e ativar as animações/IA da área!
+        // Puxa o personagem para a posição exata da câmera com Delta P = 0 e momento zerado.
+        // Desativa a Freecam imediatamente para que o personagem caia suavemente no local
+        // sem ser arremessado, com física normal e sem morrer por queda!
         let teleport_to_cam = is_key_pressed(0x54, &mut t_key_down)
             || (if let Some(ref gp) = gamepad_state {
                 let btns = gp.gamepad.w_buttons;
@@ -655,37 +720,25 @@ fn run_freecam_loop() {
             });
 
         if teleport_to_cam {
-            let target_pos = [cam_pos.x, cam_pos.y - 1.2, cam_pos.z];
-            frozen_player_pos = Some(target_pos);
-            if let Some(pos_ptr) = get_player_coords_ptr() {
-                unsafe {
-                    *pos_ptr = target_pos;
-                }
-            }
-            set_player_no_dead(true);
+            let target_pos = [cam_pos.x, cam_pos.y, cam_pos.z];
             log_msg(&format!(
-                "[TELEPORTE ATIVADO] Personagem puxado para ({:.2}, {:.2}, {:.2})! Cenário e animações carregando nesta área.",
+                "[TELEPORTE T] Personagem posicionado em ({:.2}, {:.2}, {:.2}) sem inércia. Desativando Freecam para queda limpa!",
                 target_pos[0], target_pos[1], target_pos[2]
             ));
-        }
 
-        // Atalho para retornar personagem e câmera ao ponto original (Backspace ou Home)
-        let return_to_start = is_key_pressed(0x08, &mut backspace_down)
-            || is_key_pressed(0x24, &mut home_down);
-        if return_to_start {
-            if let Some(orig) = initial_player_pos {
-                frozen_player_pos = Some(orig);
-                cam_pos = glm::vec3(orig[0], orig[1] + 1.8, orig[2]);
-                if let Some(pos_ptr) = get_player_coords_ptr() {
-                    unsafe {
-                        *pos_ptr = orig;
-                    }
-                }
-                log_msg(&format!(
-                    "[RETORNO] Câmera e personagem voltaram ao ponto de origem: ({:.2}, {:.2}, {:.2})",
-                    orig[0], orig[1], orig[2]
-                ));
-            }
+            // 1. Teleporte limpo com Delta P = 0 e momento zerado (zero arremesso/catapulta)
+            teleport_player_clean(target_pos);
+
+            // 2. Garante No Dead ativo para pouso seguro
+            set_player_no_dead(true);
+
+            // 3. Desativa a freecam imediatamente para o jogo reassumir
+            freecam_enabled = false;
+            FREECAM_ACTIVE.store(false, Ordering::SeqCst);
+            camera.camera_mask = 0;
+            frozen_player_pos = None;
+            mouse_initialized = false;
+            continue;
         }
 
         // =====================================================================
