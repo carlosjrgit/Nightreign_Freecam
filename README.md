@@ -1,5 +1,7 @@
 ![Elden Ring Nightreign Freecam](assets/banner.jpg)
 
+Nexusmods Page: https://www.nexusmods.com/eldenringnightreign/mods/912
+
 # Elden Ring Nightreign — Freecam
 
 A standalone, high-performance Freecam and camera manipulation toolkit for **ELDEN RING: NIGHTREIGN**, written in Rust.
