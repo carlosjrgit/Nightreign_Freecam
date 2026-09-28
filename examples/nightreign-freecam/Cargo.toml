@@ -1,0 +1,19 @@
+[package]
+name = "nightreign-freecam"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+fromsoftware-shared.workspace = true
+nightreign.workspace = true
+windows.workspace = true
+nalgebra-glm.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "injetar_freecam"
+path = "src/bin/injector.rs"

@@ -622,6 +622,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nightreign-freecam"
+version = "0.11.0"
+dependencies = [
+ "fromsoftware-shared",
+ "nalgebra-glm",
+ "nightreign",
+ "windows",
+]
+
+[[package]]
 name = "no-std-compat"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -9,5 +9,5 @@ use super::RvaBundle;
 /// These are populated from `mapper-profile.toml` in the root of this package
 /// using `tools/binary-generator`.
 pub const RVAS: RvaBundle = RvaBundle {
-    register_task: 0xf9fa30,
+    register_task: 0xfec510,
 };

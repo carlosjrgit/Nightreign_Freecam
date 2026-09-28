@@ -13,6 +13,7 @@ members = [
     "examples/debug-line",
     "examples/spawn-asset",
     "examples/present-action-button",
+    "examples/nightreign-freecam",
 ]
 
 [workspace.package]
@@ -46,6 +47,7 @@ features = [
 	"Win32_UI_WindowsAndMessaging",
 	"Win32_UI_Input_KeyboardAndMouse",
 	"Win32_System_Diagnostics_Debug",
+	"Win32_System_Diagnostics_ToolHelp",
 	"Win32_System_LibraryLoader",
     "Win32_System_Memory",
 ]
