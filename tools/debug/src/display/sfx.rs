@@ -21,7 +21,7 @@ impl DebugDisplay for GXFfxSceneCtrl {
         if ui.collapsing_header("Graphics Resource Manager", TreeNodeFlags::empty()) {
             ui.indent();
             ui.text(format!(
-                "graphics_resource_manager: {:#01x}",
+                "graphics_resource_manager: {:#x}",
                 self.graphics_resource_manager.as_ptr() as *const _ as usize
             ));
             unsafe {
@@ -73,7 +73,7 @@ fn render_graphics_resource_manager<'a>(
 
 impl DebugDisplay for FxrWrapper {
     fn render_debug(&self, ui: &&mut Ui) {
-        ui.text(format!("{:#01x}", self.fxr));
+        ui.text(format!("{:#x}", self.fxr));
     }
 }
 

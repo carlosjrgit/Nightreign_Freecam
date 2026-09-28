@@ -550,12 +550,12 @@ unsafe fn install_iat_hooks() {
     let xinput_slot = (base + 0xD8FC9C) as *mut usize;
     if is_valid_ptr(xinput_slot) {
         let cur = *xinput_slot;
-        if cur != 0 && cur != (hooked_xinput_get_state as usize) {
+        if cur != 0 && cur != (hooked_xinput_get_state as *const () as usize) {
             ORIGINAL_XINPUT_GET_STATE.store(cur, Ordering::SeqCst);
             let mut old_protect = PAGE_PROTECTION_FLAGS(0);
             if VirtualProtect(xinput_slot as *const _, 8, PAGE_READWRITE, &mut old_protect).is_ok()
             {
-                *xinput_slot = hooked_xinput_get_state as usize;
+                *xinput_slot = hooked_xinput_get_state as *const () as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(xinput_slot as *const _, 8, old_protect, &mut dummy);
             }
@@ -565,12 +565,12 @@ unsafe fn install_iat_hooks() {
     let cursor_slot = (base + 0xD8F93C) as *mut usize;
     if is_valid_ptr(cursor_slot) {
         let cur = *cursor_slot;
-        if cur != 0 && cur != (hooked_set_cursor_pos as usize) {
+        if cur != 0 && cur != (hooked_set_cursor_pos as *const () as usize) {
             ORIGINAL_SET_CURSOR_POS.store(cur, Ordering::SeqCst);
             let mut old_protect = PAGE_PROTECTION_FLAGS(0);
             if VirtualProtect(cursor_slot as *const _, 8, PAGE_READWRITE, &mut old_protect).is_ok()
             {
-                *cursor_slot = hooked_set_cursor_pos as usize;
+                *cursor_slot = hooked_set_cursor_pos as *const () as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(cursor_slot as *const _, 8, old_protect, &mut dummy);
             }
