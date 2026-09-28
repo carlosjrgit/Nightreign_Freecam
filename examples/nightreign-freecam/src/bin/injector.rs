@@ -103,13 +103,13 @@ fn wait_for_enter() {
 }
 
 fn main() {
-    println!("Elden Ring Nightreign - Freecam Injector");
+    println!("Elden Ring Nightreign - Freecam Launcher");
 
     let pid = match find_process_id("nightreign.exe") {
         Some(id) => id,
         None => {
             eprintln!("nightreign.exe process not found.");
-            eprintln!("Start the game and load into the world before injecting.");
+            eprintln!("Please start the game and load into the world before launching Freecam.");
             println!("\nPress Enter to exit...");
             wait_for_enter();
             return;
@@ -122,15 +122,17 @@ fn main() {
     let exe_dir = current_exe.parent().unwrap_or_else(|| Path::new("."));
 
     let candidates = [
-        exe_dir.join("agent.dll"),
+        exe_dir.join("Freecam.dll"),
+        exe_dir.join("freecam.dll"),
         exe_dir.join("nightreign_freecam.dll"),
+        exe_dir.join("agent.dll"),
     ];
 
     let dll_path = candidates
         .iter()
         .find(|p| p.exists())
         .cloned()
-        .unwrap_or_else(|| exe_dir.join("agent.dll"));
+        .unwrap_or_else(|| exe_dir.join("Freecam.dll"));
 
     if !dll_path.exists() {
         eprintln!("DLL not found: {}", dll_path.display());
@@ -217,13 +219,13 @@ fn main() {
             return;
         }
 
-        println!("Injecting DLL...");
+        println!("Injecting Freecam.dll...");
         WaitForSingleObject(thread_handle, 5000);
 
         CloseHandle(thread_handle);
         CloseHandle(process);
 
-        println!("Injection successful.\n");
+        println!("Freecam attached successfully.\n");
         println!("Controls:");
         println!("  P / F1 / L3+R3    : Toggle Freecam");
         println!("  W, A, S, D        : Move camera");

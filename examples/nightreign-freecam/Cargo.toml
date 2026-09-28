@@ -15,5 +15,5 @@ nalgebra-glm.workspace = true
 crate-type = ["cdylib"]
 
 [[bin]]
-name = "injetar_freecam"
+name = "FreecamLauncher"
 path = "src/bin/injector.rs"
