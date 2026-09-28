@@ -300,6 +300,64 @@ fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
     None
 }
 
+/// Retorna o ponteiro para o byte de flags de debug (incluindo No Dead) em ChrDataModule.
+fn get_player_no_dead_ptr() -> Option<*mut u8> {
+    // 1. Tenta via Singleton oficial WorldChrMan
+    if let Ok(wcm) = unsafe { <nightreign::cs::WorldChrMan as FromStatic>::instance() } {
+        let wcm_ptr = wcm as *mut nightreign::cs::WorldChrMan as *mut u8;
+        if is_valid_ptr(wcm_ptr) {
+            let player_ptr = unsafe { *(wcm_ptr.add(0x174e8) as *const *mut u8) };
+            if is_valid_ptr(player_ptr) {
+                let modules_ptr = unsafe { *(player_ptr.add(0x1b8) as *const *mut u8) };
+                if is_valid_ptr(modules_ptr) {
+                    let data_ptr = unsafe { *(modules_ptr.add(0x00) as *const *mut u8) };
+                    if is_valid_ptr(data_ptr) {
+                        return Some(unsafe { data_ptr.add(0x189) });
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback via RVA estático do ponteiro de WorldChrMan no .data (+0x3B04378)
+    unsafe {
+        if let Ok(hmod) = GetModuleHandleA(PCSTR(std::ptr::null())) {
+            let base = hmod.0 as usize;
+            let wcm_global = (base + 0x3B04378) as *const *mut u8;
+            if is_valid_ptr(wcm_global) {
+                let wcm = *wcm_global;
+                if is_valid_ptr(wcm) {
+                    let player = *(wcm.add(0x174e8) as *const *mut u8);
+                    if is_valid_ptr(player) {
+                        let modules = *(player.add(0x1b8) as *const *mut u8);
+                        if is_valid_ptr(modules) {
+                            let data = *(modules.add(0x00) as *const *mut u8);
+                            if is_valid_ptr(data) {
+                                return Some(data.add(0x189));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Ativa ou desativa a flag nativa No Dead do jogo (imunidade a morte por queda e dano).
+fn set_player_no_dead(enable: bool) {
+    if let Some(ptr) = get_player_no_dead_ptr() {
+        unsafe {
+            if enable {
+                *ptr |= 0x02; // Bit 1 = No Dead
+            } else {
+                *ptr &= !0x02;
+            }
+        }
+    }
+}
+
 // =========================================================================
 // EXPORTS EXIGIDOS PELO GUI.EXE (Freecam+ v0.5.1)
 // =========================================================================
@@ -355,7 +413,7 @@ pub unsafe extern "C" fn DllMain(_hmodule: HINSTANCE, reason: u32) -> bool {
         return true;
     }
 
-    log_msg("=== Nightreign Freecam v4 (Livre Total Mouse + Joystick + Freeze) Carregada! ===");
+    log_msg("=== Nightreign Freecam v5 (Freecam Estavel + Teleporte Streaming 'T') Carregada! ===");
 
     init_direct_xinput();
     install_iat_hooks();
@@ -416,6 +474,9 @@ fn run_freecam_loop() {
     let mut p_key_down = false;
     let mut f1_key_down = false;
     let mut r_key_down = false;
+    let mut t_key_down = false;
+    let mut backspace_down = false;
+    let mut home_down = false;
     let mut controller_toggle_down = false;
     let mut freecam_enabled = false;
 
@@ -426,7 +487,9 @@ fn run_freecam_loop() {
     let mut cam_fov = 45.0f32;
     let mut base_speed = 12.0f32;
 
+    let mut initial_player_pos: Option<[f32; 3]> = None;
     let mut frozen_player_pos: Option<[f32; 3]> = None;
+    let mut grace_fall_timer = 0.0f32;
 
     let mut last_mouse_pos = POINT { x: 0, y: 0 };
     let mut mouse_initialized = false;
@@ -496,7 +559,7 @@ fn run_freecam_loop() {
             FREECAM_ACTIVE.store(freecam_enabled, Ordering::SeqCst);
 
             if freecam_enabled {
-                log_msg(">>> FREECAM ATIVADA! Sincronizando e imobilizando jogador... <<<");
+                log_msg(">>> FREECAM ATIVADA! Pressione [T] para puxar o personagem e renderizar o cenário da câmera. <<<");
                 let m = &primary_cam.matrix;
                 cam_pos = glm::vec3(m.3 .0, m.3 .1, m.3 .2);
                 cam_fov = primary_cam.fov;
@@ -522,11 +585,15 @@ fn run_freecam_loop() {
                 if let Some(pos_ptr) = get_player_coords_ptr() {
                     let p_pos = unsafe { *pos_ptr };
                     frozen_player_pos = Some(p_pos);
+                    initial_player_pos = Some(p_pos);
                     log_msg(&format!(
                         "Personagem imobilizado em: ({:.2}, {:.2}, {:.2})",
                         p_pos[0], p_pos[1], p_pos[2]
                     ));
                 }
+
+                // Liga No Dead enquanto a freecam estiver ativa
+                set_player_no_dead(true);
 
                 camera.camera_mask = 0b00100010;
                 let init_matrix = primary_cam.matrix;
@@ -534,21 +601,90 @@ fn run_freecam_loop() {
             } else {
                 log_msg(">>> FREECAM DESATIVADA! Restaurando controle normal do jogador. <<<");
                 camera.camera_mask = 0;
+
+                // Se Shift estiver pressionado durante o toggle de saída, restaura a posição inicial
+                if is_key_down(0x10) {
+                    if let (Some(pos_ptr), Some(orig)) = (get_player_coords_ptr(), initial_player_pos) {
+                        unsafe {
+                            *pos_ptr = orig;
+                        }
+                        log_msg(&format!(
+                            "Personagem retornado para a posição inicial: ({:.2}, {:.2}, {:.2})",
+                            orig[0], orig[1], orig[2]
+                        ));
+                    }
+                }
+
                 frozen_player_pos = None;
                 mouse_initialized = false;
+                grace_fall_timer = 3.0; // 3 segundos de No Dead para pouso suave
             }
         }
 
         if !freecam_enabled {
+            if grace_fall_timer > 0.0 {
+                grace_fall_timer -= dt;
+                set_player_no_dead(true);
+            } else if grace_fall_timer <= 0.0 && grace_fall_timer > -1.0 {
+                grace_fall_timer = -2.0;
+                set_player_no_dead(false);
+            }
             continue;
         }
 
         camera.camera_mask = 0b00100010;
 
-        // Manter o personagem congelado no lugar
+        // Manter o personagem congelado no lugar atual (sem movimento contínuo = física Havok 100% estável)
         if let (Some(pos_ptr), Some(freeze_pos)) = (get_player_coords_ptr(), frozen_player_pos) {
             unsafe {
                 *pos_ptr = freeze_pos;
+            }
+        }
+
+        // =====================================================================
+        // TELEPORTE SOB DEMANDA (TECLA 'T' OU LB + Y NO CONTROLE)
+        // =====================================================================
+        // Puxa o personagem para a posição atual da câmera. Isso faz o motor do jogo
+        // carregar imediatamente o cenário (LOD 0) e ativar as animações/IA da área!
+        let teleport_to_cam = is_key_pressed(0x54, &mut t_key_down)
+            || (if let Some(ref gp) = gamepad_state {
+                let btns = gp.gamepad.w_buttons;
+                (btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0) && (btns & XINPUT_GAMEPAD_Y != 0)
+            } else {
+                false
+            });
+
+        if teleport_to_cam {
+            let target_pos = [cam_pos.x, cam_pos.y - 1.2, cam_pos.z];
+            frozen_player_pos = Some(target_pos);
+            if let Some(pos_ptr) = get_player_coords_ptr() {
+                unsafe {
+                    *pos_ptr = target_pos;
+                }
+            }
+            set_player_no_dead(true);
+            log_msg(&format!(
+                "[TELEPORTE ATIVADO] Personagem puxado para ({:.2}, {:.2}, {:.2})! Cenário e animações carregando nesta área.",
+                target_pos[0], target_pos[1], target_pos[2]
+            ));
+        }
+
+        // Atalho para retornar personagem e câmera ao ponto original (Backspace ou Home)
+        let return_to_start = is_key_pressed(0x08, &mut backspace_down)
+            || is_key_pressed(0x24, &mut home_down);
+        if return_to_start {
+            if let Some(orig) = initial_player_pos {
+                frozen_player_pos = Some(orig);
+                cam_pos = glm::vec3(orig[0], orig[1] + 1.8, orig[2]);
+                if let Some(pos_ptr) = get_player_coords_ptr() {
+                    unsafe {
+                        *pos_ptr = orig;
+                    }
+                }
+                log_msg(&format!(
+                    "[RETORNO] Câmera e personagem voltaram ao ponto de origem: ({:.2}, {:.2}, {:.2})",
+                    orig[0], orig[1], orig[2]
+                ));
             }
         }
 
