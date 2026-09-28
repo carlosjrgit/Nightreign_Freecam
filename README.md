@@ -8,11 +8,19 @@ Designed for virtual photography, cinematic content creation, and world inspecti
 
 ---
 
-## Video Demonstration
+## Live Previews
 
-[![Elden Ring Nightreign Freecam Mod Demo](https://img.youtube.com/vi/MXerz9vuJdk/maxresdefault.jpg)](https://www.youtube.com/watch?v=MXerz9vuJdk)
+### 🕹️ 6-Axis Freecam Navigation & Translucent OSD Guide
+![Freecam Flight & OSD](assets/demo_freecam_flight.webp)
 
-> 🎬 **Watch the full demonstration on YouTube:** [Elden Ring Nightreign Freecam Mod Demo](https://www.youtube.com/watch?v=MXerz9vuJdk)
+### ⚡ Safe Teleportation & Landing (`T`)
+![Character Teleport](assets/demo_teleport.webp)
+
+### 🔄 Unconstrained 360° Roll & Dutch Angles (`Q` / `E`)
+![Camera Roll](assets/demo_camera_roll.webp)
+
+### 🏰 World Inspection & High-Altitude Flight
+![World Exploration](assets/demo_exploration.webp)
 
 ---
 
@@ -160,3 +168,15 @@ The compiled binaries will be generated at:
 - Underlying engine reverse-engineering runtime bindings built on `fromsoftware-rs` by `vswarte`.
 - Community reverse engineering contributions by Dasaav, Tremwil, Sfix, Yui, and Vawser.
 - Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-ASL2).
+
+---
+
+## Full Video Demonstration
+
+[![Elden Ring Nightreign Freecam Mod Demo](https://img.youtube.com/vi/MXerz9vuJdk/maxresdefault.jpg)](https://www.youtube.com/watch?v=MXerz9vuJdk)
+
+---
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=MXerz9vuJdk"><strong>👉 veja a demonstração completa aqui!</strong></a>
+</p>
