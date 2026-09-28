@@ -22,10 +22,6 @@ extern "system" {
 const SM_CXSCREEN: i32 = 0;
 const SM_CYSCREEN: i32 = 1;
 
-// =========================================================================
-// DEFINIÇÕES E TIPOS DO XINPUT (CONTROLE / JOYSTICK)
-// =========================================================================
-
 pub const XINPUT_GAMEPAD_DPAD_UP: u16 = 0x0001;
 pub const XINPUT_GAMEPAD_DPAD_DOWN: u16 = 0x0002;
 pub const XINPUT_GAMEPAD_DPAD_LEFT: u16 = 0x0004;
@@ -99,10 +95,6 @@ fn is_key_pressed(vk: i32, was_down: &mut bool) -> bool {
     pressed
 }
 
-// =========================================================================
-// IAT HOOKS: XINPUT & SETCURSORPOS (IMPEDE O JOGO DE BRIGAR COM O MOUSE E CONTROLE)
-// =========================================================================
-
 unsafe extern "system" fn hooked_xinput_get_state(
     dw_user_index: u32,
     p_state: *mut XINPUT_STATE,
@@ -117,15 +109,12 @@ unsafe extern "system" fn hooked_xinput_get_state(
         return res;
     }
 
-    // Salva o estado real ANTES de qualquer modificação para a nossa câmera usar!
     if dw_user_index == 0 {
         if let Ok(mut lock) = LATEST_REAL_GAMEPAD.lock() {
             *lock = Some(*p_state);
         }
     }
 
-    // Se a freecam estiver ativa, ocultamos os inputs do jogo para que o
-    // personagem fique estático, sem andar, esquivar ou bater!
     if FREECAM_ACTIVE.load(Ordering::Relaxed) {
         (*p_state).gamepad.w_buttons = 0;
         (*p_state).gamepad.b_left_trigger = 0;
@@ -139,10 +128,8 @@ unsafe extern "system" fn hooked_xinput_get_state(
     res
 }
 
-/// Impede o motor do jogo de puxar o cursor do mouse de volta para o centro enquanto Freecam estiver ativa!
 unsafe extern "system" fn hooked_set_cursor_pos(x: i32, y: i32) -> BOOL {
     if FREECAM_ACTIVE.load(Ordering::Relaxed) {
-        // Bloqueia a tentativa do jogo de travar o cursor!
         return BOOL(1);
     }
 
@@ -155,7 +142,6 @@ unsafe extern "system" fn hooked_set_cursor_pos(x: i32, y: i32) -> BOOL {
     }
 }
 
-/// Chamada direta e real do SetCursorPos do Windows para recentralizar o cursor da Freecam sem ser bloqueado
 fn real_set_cursor_pos(x: i32, y: i32) {
     let orig = ORIGINAL_SET_CURSOR_POS.load(Ordering::Relaxed);
     if orig != 0 {
@@ -176,7 +162,6 @@ unsafe fn install_iat_hooks() {
         Err(_) => return,
     };
 
-    // 1. Hook XInputGetState (RVA: 0xD8FC9C)
     let xinput_slot = (base + 0xD8FC9C) as *mut usize;
     if is_valid_ptr(xinput_slot) {
         let cur = *xinput_slot;
@@ -187,12 +172,11 @@ unsafe fn install_iat_hooks() {
                 *xinput_slot = hooked_xinput_get_state as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(xinput_slot as *const _, 8, old_protect, &mut dummy);
-                log_msg(&format!("IAT Hook XInput instalado em 0x{:X}", base + 0xD8FC9C));
+                log_msg(&format!("Hooked XInput at 0x{:X}", base + 0xD8FC9C));
             }
         }
     }
 
-    // 2. Hook SetCursorPos (RVA: 0xD8F93C)
     let cursor_slot = (base + 0xD8F93C) as *mut usize;
     if is_valid_ptr(cursor_slot) {
         let cur = *cursor_slot;
@@ -203,13 +187,12 @@ unsafe fn install_iat_hooks() {
                 *cursor_slot = hooked_set_cursor_pos as usize;
                 let mut dummy = PAGE_PROTECTION_FLAGS(0);
                 let _ = VirtualProtect(cursor_slot as *const _, 8, old_protect, &mut dummy);
-                log_msg(&format!("IAT Hook SetCursorPos instalado em 0x{:X}", base + 0xD8F93C));
+                log_msg(&format!("Hooked SetCursorPos at 0x{:X}", base + 0xD8F93C));
             }
         }
     }
 }
 
-// Carrega XInputGetState nativo diretamente como fallback
 fn init_direct_xinput() {
     unsafe {
         let mut h = LoadLibraryA(PCSTR(b"xinput1_4.dll\0".as_ptr()));
@@ -222,7 +205,7 @@ fn init_direct_xinput() {
         if let Ok(mod_handle) = h {
             if let Some(proc) = GetProcAddress(mod_handle, PCSTR(b"XInputGetState\0".as_ptr())) {
                 DIRECT_XINPUT_GET_STATE.store(proc as usize, Ordering::SeqCst);
-                log_msg("XInput nativo pronto para camera!");
+                log_msg("Direct XInput loaded");
             }
         }
     }
@@ -255,9 +238,7 @@ fn poll_gamepad_direct(dw_user_index: u32) -> Option<XINPUT_STATE> {
 // CONGELAMENTO DO JOGADOR (PLAYER FREEZE)
 // =========================================================================
 
-/// Retorna o ponteiro para o módulo de física (CSChrPhysicsModule) do jogador principal.
 fn get_player_physics_ptr() -> Option<*mut u8> {
-    // 1. Tenta via Singleton oficial WorldChrMan
     if let Ok(wcm) = unsafe { <nightreign::cs::WorldChrMan as FromStatic>::instance() } {
         let wcm_ptr = wcm as *mut nightreign::cs::WorldChrMan as *mut u8;
         if is_valid_ptr(wcm_ptr) {
@@ -274,7 +255,6 @@ fn get_player_physics_ptr() -> Option<*mut u8> {
         }
     }
 
-    // 2. Fallback via RVA estático do ponteiro de WorldChrMan no .data (+0x3B04378)
     unsafe {
         if let Ok(hmod) = GetModuleHandleA(PCSTR(std::ptr::null())) {
             let base = hmod.0 as usize;
@@ -300,14 +280,10 @@ fn get_player_physics_ptr() -> Option<*mut u8> {
     None
 }
 
-/// Retorna o ponteiro para as coordenadas X, Y, Z da física do jogador principal.
 fn get_player_coords_ptr() -> Option<*mut [f32; 3]> {
     get_player_physics_ptr().map(|p| unsafe { p.add(0x70) as *mut [f32; 3] })
 }
 
-/// Teleporta o jogador de forma 100% limpa, sem acumular inércia e sem ser arremessado.
-/// Atualiza tanto 'position' (0x70) quanto 'last_update_position' (0x80),
-/// ativa 'chr_proxy_pos_update_requested' (0x91 = 1) e zera 'root_motion' (0xd0 e 0xe0).
 fn teleport_player_clean(target: [f32; 3]) {
     if let Some(phys) = get_player_physics_ptr() {
         unsafe {
@@ -315,9 +291,9 @@ fn teleport_player_clean(target: [f32; 3]) {
             let last_pos = phys.add(0x80) as *mut [f32; 4];
             *pos = [target[0], target[1], target[2], 1.0];
             *last_pos = [target[0], target[1], target[2], 1.0];
-            *phys.add(0x91) = 1; // Notifica o Havok que a posição foi forçada (Delta P = 0)
-            *(phys.add(0xd0) as *mut [f32; 4]) = [0.0, 0.0, 0.0, 0.0]; // root_motion
-            *(phys.add(0xe0) as *mut [f32; 4]) = [0.0, 0.0, 0.0, 0.0]; // root_motion_unk
+            *phys.add(0x91) = 1;
+            *(phys.add(0xd0) as *mut [f32; 4]) = [0.0, 0.0, 0.0, 0.0];
+            *(phys.add(0xe0) as *mut [f32; 4]) = [0.0, 0.0, 0.0, 0.0];
         }
     } else if let Some(coords_ptr) = get_player_coords_ptr() {
         unsafe {
@@ -326,9 +302,7 @@ fn teleport_player_clean(target: [f32; 3]) {
     }
 }
 
-/// Retorna o ponteiro para o byte de flags de debug (incluindo No Dead) em ChrDataModule.
 fn get_player_no_dead_ptr() -> Option<*mut u8> {
-    // 1. Tenta via Singleton oficial WorldChrMan
     if let Ok(wcm) = unsafe { <nightreign::cs::WorldChrMan as FromStatic>::instance() } {
         let wcm_ptr = wcm as *mut nightreign::cs::WorldChrMan as *mut u8;
         if is_valid_ptr(wcm_ptr) {
@@ -345,7 +319,6 @@ fn get_player_no_dead_ptr() -> Option<*mut u8> {
         }
     }
 
-    // 2. Fallback via RVA estático do ponteiro de WorldChrMan no .data (+0x3B04378)
     unsafe {
         if let Ok(hmod) = GetModuleHandleA(PCSTR(std::ptr::null())) {
             let base = hmod.0 as usize;
@@ -371,12 +344,11 @@ fn get_player_no_dead_ptr() -> Option<*mut u8> {
     None
 }
 
-/// Ativa ou desativa a flag nativa No Dead do jogo (imunidade a morte por queda e dano).
 fn set_player_no_dead(enable: bool) {
     if let Some(ptr) = get_player_no_dead_ptr() {
         unsafe {
             if enable {
-                *ptr |= 0x02; // Bit 1 = No Dead
+                *ptr |= 0x02;
             } else {
                 *ptr &= !0x02;
             }
@@ -384,13 +356,10 @@ fn set_player_no_dead(enable: bool) {
     }
 }
 
-// =========================================================================
-// EXPORTS EXIGIDOS PELO GUI.EXE (Freecam+ v0.5.1)
-// =========================================================================
+// RPC exports for gui.exe compatibility
 
 #[no_mangle]
 pub unsafe extern "C" fn initialize(ctx: *mut u8) -> u32 {
-    log_msg("RPC: initialize chamado com sucesso pelo gui.exe!");
     if !ctx.is_null() {
         *ctx.add(0x10) = 1;
     }
@@ -429,17 +398,13 @@ pub unsafe extern "C" fn snapshot_camera_state(ctx: *mut u8) -> u32 {
     0
 }
 
-// =========================================================================
-// CICLO DE VIDA DA DLL (DllMain)
-// =========================================================================
-
 #[no_mangle]
 pub unsafe extern "C" fn DllMain(_hmodule: HINSTANCE, reason: u32) -> bool {
     if reason != 1 {
         return true;
     }
 
-    log_msg("=== Nightreign Freecam v5 (Freecam Estavel + Teleporte Streaming 'T') Carregada! ===");
+    log_msg("Nightreign freecam module loaded.");
 
     init_direct_xinput();
     install_iat_hooks();
@@ -449,14 +414,13 @@ pub unsafe extern "C" fn DllMain(_hmodule: HINSTANCE, reason: u32) -> bool {
             run_freecam_loop();
         });
         if let Err(e) = res {
-            log_msg(&format!("ERRO no loop de freecam: {:?}", e));
+            log_msg(&format!("Error in freecam loop: {:?}", e));
         }
     });
 
     true
 }
 
-/// Atualiza TODAS as 4 cameras de perspectiva simultaneamente.
 fn update_all_cameras(camera: &mut CSCamera, matrix: F32Matrix4x4, fov: f32) {
     let base = camera as *mut CSCamera as *mut *mut CSCam;
     for i in 0..4 {
@@ -479,7 +443,6 @@ fn get_primary_camera(camera: &CSCamera) -> Option<*mut CSCam> {
     None
 }
 
-/// Aplica deadzone circular e resposta exponencial
 fn apply_deadzone_and_curve(raw_x: i16, raw_y: i16, deadzone: f32) -> (f32, f32) {
     let norm_x = raw_x as f32 / 32767.0;
     let norm_y = raw_y as f32 / 32767.0;
@@ -522,7 +485,7 @@ fn run_freecam_loop() {
     let mut last_frame = Instant::now();
     let mut logged_singleton = false;
 
-    log_msg("Loop de freecam ativo. Aguardando mapa/jogador carregar...");
+    log_msg("Freecam loop started.");
 
     loop {
         std::thread::sleep(Duration::from_millis(2));
@@ -530,12 +493,8 @@ fn run_freecam_loop() {
         let dt = (now - last_frame).as_secs_f32().clamp(0.0005, 0.05);
         last_frame = now;
 
-        // 1. Mantém No Dead permanentemente ativo:
-        // Elimina 100% dano e morte por queda. O personagem pode cair eternamente sem morrer.
-        // Ao tocar em qualquer superfície sólida ou objeto com colisão, pousa em pé normalmente.
         set_player_no_dead(true);
 
-        // 2. Salva a posição de surgimento inicial (spawn) assim que as coordenadas forem válidas
         if spawn_origin_pos.is_none() {
             if let Some(phys) = get_player_physics_ptr() {
                 unsafe {
@@ -543,7 +502,7 @@ fn run_freecam_loop() {
                     if (pos[0].abs() > 0.1 || pos[1].abs() > 0.1 || pos[2].abs() > 0.1) && pos[0].is_finite() {
                         spawn_origin_pos = Some([pos[0], pos[1], pos[2]]);
                         log_msg(&format!(
-                            "[SPAWN REGISTRADO] Origem inicial de spawn salva: ({:.2}, {:.2}, {:.2})",
+                            "Spawn origin registered: ({:.2}, {:.2}, {:.2})",
                             pos[0], pos[1], pos[2]
                         ));
                     }
@@ -551,12 +510,10 @@ fn run_freecam_loop() {
             }
         }
 
-        // Leitura de teclas de alternância
         let toggle_p = is_key_pressed(0x50, &mut p_key_down);
         let toggle_f1 = is_key_pressed(0x70, &mut f1_key_down);
         let reset_r = is_key_pressed(0x52, &mut r_key_down);
 
-        // Obter estado real do Gamepad
         let gamepad_state = {
             let lock_state = LATEST_REAL_GAMEPAD.lock().ok().and_then(|g| *g);
             if lock_state.is_some() {
@@ -576,12 +533,9 @@ fn run_freecam_loop() {
 
         if !logged_singleton {
             logged_singleton = true;
-            log_msg(&format!("CSCamera encontrado em {:p}!", camera));
+            log_msg(&format!("CSCamera resolved at {:p}", camera));
         }
 
-        // 3. Botão de Resgate 24/7 (Home / Backspace / LB + Back no controle):
-        // Leva o boneco instantaneamente de volta para onde surgiu pela primeira vez!
-        // Se estiver caindo infinitamente no void ou preso, basta apertar HOME que ele retorna.
         let controller_rescue = if let Some(ref gp) = gamepad_state {
             let btns = gp.gamepad.w_buttons;
             (btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0) && (btns & XINPUT_GAMEPAD_BACK != 0)
@@ -596,7 +550,7 @@ fn run_freecam_loop() {
         if rescue_home {
             if let Some(origin) = spawn_origin_pos {
                 log_msg(&format!(
-                    "[RESCUE HOME] Resgatando jogador para a origem inicial de spawn: ({:.2}, {:.2}, {:.2})",
+                    "Returning player to spawn origin: ({:.2}, {:.2}, {:.2})",
                     origin[0], origin[1], origin[2]
                 ));
                 teleport_player_clean(origin);
@@ -612,7 +566,6 @@ fn run_freecam_loop() {
             }
         }
 
-        // Alternância pelo controle: L3 + R3
         let mut toggle_controller = false;
         if let Some(ref gp) = gamepad_state {
             let l3_r3 = (gp.gamepad.w_buttons & XINPUT_GAMEPAD_LEFT_THUMB != 0)
@@ -632,13 +585,12 @@ fn run_freecam_loop() {
 
         let primary_cam = unsafe { &*primary_ptr };
 
-        // Alternância do Freecam
         if toggle_p || toggle_f1 || toggle_controller {
             freecam_enabled = !freecam_enabled;
             FREECAM_ACTIVE.store(freecam_enabled, Ordering::SeqCst);
 
             if freecam_enabled {
-                log_msg(">>> FREECAM ATIVADA! Pressione [T] para cair exatamente no local da câmera. <<<");
+                log_msg("Freecam enabled");
                 let m = &primary_cam.matrix;
                 cam_pos = glm::vec3(m.3 .0, m.3 .1, m.3 .2);
                 cam_fov = primary_cam.fov;
@@ -660,12 +612,11 @@ fn run_freecam_loop() {
                 last_mouse_pos = POINT { x: cx, y: cy };
                 mouse_initialized = true;
 
-                // Salva a posição física do personagem para congelá-lo imóvel
                 if let Some(coords_ptr) = get_player_coords_ptr() {
                     let p_pos = unsafe { *coords_ptr };
                     frozen_player_pos = Some(p_pos);
                     log_msg(&format!(
-                        "Personagem imobilizado em: ({:.2}, {:.2}, {:.2})",
+                        "Player position locked: ({:.2}, {:.2}, {:.2})",
                         p_pos[0], p_pos[1], p_pos[2]
                     ));
                 }
@@ -675,15 +626,14 @@ fn run_freecam_loop() {
                 let init_matrix = primary_cam.matrix;
                 update_all_cameras(camera, init_matrix, cam_fov);
             } else {
-                log_msg(">>> FREECAM DESATIVADA! Restaurando controle normal do jogador. <<<");
+                log_msg("Freecam disabled");
                 camera.camera_mask = 0;
 
-                // Se Shift estiver pressionado durante o toggle de saída, restaura a posição inicial
                 if is_key_down(0x10) {
                     if let Some(origin) = spawn_origin_pos {
                         teleport_player_clean(origin);
                         log_msg(&format!(
-                            "Personagem retornado para a origem: ({:.2}, {:.2}, {:.2})",
+                            "Player returned to origin: ({:.2}, {:.2}, {:.2})",
                             origin[0], origin[1], origin[2]
                         ));
                     }
@@ -700,17 +650,10 @@ fn run_freecam_loop() {
 
         camera.camera_mask = 0b00100010;
 
-        // Manter o personagem congelado no lugar atual com velocidade ZERO
         if let Some(freeze_pos) = frozen_player_pos {
             teleport_player_clean(freeze_pos);
         }
 
-        // =====================================================================
-        // TELEPORTE SOB DEMANDA (TECLA 'T' OU LB + Y NO CONTROLE)
-        // =====================================================================
-        // Puxa o personagem para a posição exata da câmera com Delta P = 0 e momento zerado.
-        // Desativa a Freecam imediatamente para que o personagem caia suavemente no local
-        // sem ser arremessado, com física normal e sem morrer por queda!
         let teleport_to_cam = is_key_pressed(0x54, &mut t_key_down)
             || (if let Some(ref gp) = gamepad_state {
                 let btns = gp.gamepad.w_buttons;
@@ -722,17 +665,13 @@ fn run_freecam_loop() {
         if teleport_to_cam {
             let target_pos = [cam_pos.x, cam_pos.y, cam_pos.z];
             log_msg(&format!(
-                "[TELEPORTE T] Personagem posicionado em ({:.2}, {:.2}, {:.2}) sem inércia. Desativando Freecam para queda limpa!",
+                "Teleported player to camera: ({:.2}, {:.2}, {:.2})",
                 target_pos[0], target_pos[1], target_pos[2]
             ));
 
-            // 1. Teleporte limpo com Delta P = 0 e momento zerado (zero arremesso/catapulta)
             teleport_player_clean(target_pos);
-
-            // 2. Garante No Dead ativo para pouso seguro
             set_player_no_dead(true);
 
-            // 3. Desativa a freecam imediatamente para o jogo reassumir
             freecam_enabled = false;
             FREECAM_ACTIVE.store(false, Ordering::SeqCst);
             camera.camera_mask = 0;
@@ -741,12 +680,8 @@ fn run_freecam_loop() {
             continue;
         }
 
-        // =====================================================================
-        // CONTROLE DE VELOCIDADE
-        // =====================================================================
         let mut speed_multiplier = 1.0f32;
 
-        // Teclado: Shift = Boost, Alt = Slow
         if is_key_down(0x10) {
             speed_multiplier *= 3.5;
         }
@@ -754,7 +689,6 @@ fn run_freecam_loop() {
             speed_multiplier *= 0.25;
         }
 
-        // Teclado: Teclas 1 e 2 para ajustar velocidade base
         if is_key_down(0x31) {
             base_speed = (base_speed - 6.0 * dt).clamp(1.5, 120.0);
         }
@@ -762,7 +696,6 @@ fn run_freecam_loop() {
             base_speed = (base_speed + 6.0 * dt).clamp(1.5, 120.0);
         }
 
-        // Controle: B ou L3 = Boost, A ou X = Slow
         if let Some(ref gp) = gamepad_state {
             let btns = gp.gamepad.w_buttons;
             if (btns & XINPUT_GAMEPAD_B != 0) || (btns & XINPUT_GAMEPAD_LEFT_THUMB != 0) {
@@ -772,7 +705,6 @@ fn run_freecam_loop() {
                 speed_multiplier *= 0.25;
             }
 
-            // D-Pad Cima / Baixo = Ajustar velocidade base
             if btns & XINPUT_GAMEPAD_LEFT_SHOULDER == 0 {
                 if btns & XINPUT_GAMEPAD_DPAD_UP != 0 {
                     base_speed = (base_speed + 6.0 * dt).clamp(1.5, 120.0);
@@ -786,9 +718,6 @@ fn run_freecam_loop() {
         let move_speed = base_speed * speed_multiplier;
         let rot_speed = 2.0f32;
 
-        // =====================================================================
-        // ROTAÇÃO DA CÂMERA PELO MOUSE (GIRO LIVRE GLOBAL DE 360° INFINITO)
-        // =====================================================================
         let mut cur_mouse = POINT { x: 0, y: 0 };
         if unsafe { GetCursorPos(&mut cur_mouse).is_ok() } {
             if !mouse_initialized {
@@ -801,7 +730,6 @@ fn run_freecam_loop() {
 
                 if dx.abs() > 0.0 || dy.abs() > 0.0 {
                     let mut sens = 0.0032f32;
-                    // Botão Direito do Mouse ou Alt = Modo Precisão Lenta
                     if is_key_down(0x02) || is_key_down(0x12) {
                         sens *= 0.25;
                     }
@@ -812,7 +740,6 @@ fn run_freecam_loop() {
                     cam_yaw += dx * sens;
                     cam_pitch += dy * sens;
 
-                    // Mantém cam_yaw normalizado entre -PI e +PI para precisão trigonométrica contínua
                     if cam_yaw > std::f32::consts::PI {
                         cam_yaw -= std::f32::consts::PI * 2.0;
                     } else if cam_yaw < -std::f32::consts::PI {
@@ -820,12 +747,6 @@ fn run_freecam_loop() {
                     }
                 }
 
-                // Recentralização simétrica baseada na distância do centro da tela:
-                // Quando o cursor se afasta do centro mais de 150px em qualquer direção,
-                // reposicionamos de volta no centro (cx, cy).
-                // Isso garante que o mouse NUNCA alcance a borda física da tela em nenhum lado
-                // (nem esquerda, nem direita, nem topo, nem base),
-                // permitindo rotações contínuas de 360°, 720°, 1080° e infinitas para ambos os lados!
                 let screen_w = unsafe { GetSystemMetrics(SM_CXSCREEN) };
                 let screen_h = unsafe { GetSystemMetrics(SM_CYSCREEN) };
                 let cx = if screen_w > 0 { screen_w / 2 } else { 960 };
@@ -843,9 +764,6 @@ fn run_freecam_loop() {
             }
         }
 
-        // =====================================================================
-        // ROTAÇÃO DA CÂMERA PELO JOYSTICK (ANALÓGICO DIREITO)
-        // =====================================================================
         if let Some(ref gp) = gamepad_state {
             let (look_x, look_y) =
                 apply_deadzone_and_curve(gp.gamepad.s_thumb_rx, gp.gamepad.s_thumb_ry, 0.18);
@@ -856,7 +774,6 @@ fn run_freecam_loop() {
             }
         }
 
-        // Setas do teclado
         if is_key_down(0x25) || is_key_down(0x64) {
             cam_yaw -= rot_speed * dt;
         }
@@ -870,10 +787,6 @@ fn run_freecam_loop() {
             cam_pitch += rot_speed * dt;
         }
 
-        // =====================================================================
-        // INCLINAÇÃO (ROLL) E ZOOM (FOV)
-        // =====================================================================
-        // Teclado: Q / E para Roll, R para resetar
         if is_key_down(0x51) {
             cam_roll -= rot_speed * 0.8 * dt;
         }
@@ -884,7 +797,6 @@ fn run_freecam_loop() {
             cam_roll = 0.0;
         }
 
-        // Teclado: [ e ] para FOV
         if is_key_down(0xDB) {
             cam_fov = (cam_fov - 25.0 * dt).clamp(5.0, 130.0);
         }
@@ -892,7 +804,6 @@ fn run_freecam_loop() {
             cam_fov = (cam_fov + 25.0 * dt).clamp(5.0, 130.0);
         }
 
-        // Controle: D-Pad Esquerda / Direita = Roll, R3 = Resetar Roll
         if let Some(ref gp) = gamepad_state {
             let btns = gp.gamepad.w_buttons;
 
@@ -906,7 +817,6 @@ fn run_freecam_loop() {
                 cam_roll = 0.0;
             }
 
-            // LB + D-Pad Cima / Baixo = FOV Zoom In / Out
             if btns & XINPUT_GAMEPAD_LEFT_SHOULDER != 0 {
                 if btns & XINPUT_GAMEPAD_DPAD_UP != 0 {
                     cam_fov = (cam_fov - 20.0 * dt).clamp(5.0, 130.0);
@@ -919,9 +829,6 @@ fn run_freecam_loop() {
 
         cam_pitch = cam_pitch.clamp(-1.55, 1.55);
 
-        // =====================================================================
-        // MATRIZ DE ORIENTAÇÃO 6DOF
-        // =====================================================================
         let forward = glm::vec3(
             cam_yaw.sin() * cam_pitch.cos(),
             -cam_pitch.sin(),
@@ -942,12 +849,8 @@ fn run_freecam_loop() {
             up_base
         };
 
-        // =====================================================================
-        // MOVIMENTAÇÃO 6DOF (WASD + JOYSTICK ESQUERDO + GATILHOS)
-        // =====================================================================
         let mut move_dir = glm::vec3(0.0f32, 0.0, 0.0);
 
-        // 1. Teclado: WASD + Espaço + Ctrl/C
         if is_key_down(0x57) {
             move_dir += forward;
         }
@@ -967,14 +870,12 @@ fn run_freecam_loop() {
             move_dir -= world_up;
         }
 
-        // 2. Analógico Esquerdo do Controle (LS)
         if let Some(ref gp) = gamepad_state {
             let (stick_x, stick_y) =
                 apply_deadzone_and_curve(gp.gamepad.s_thumb_lx, gp.gamepad.s_thumb_ly, 0.18);
             move_dir += forward * stick_y;
             move_dir += right * stick_x;
 
-            // Gatilhos analógicos para Subida e Descida proporcional à pressão
             let trig_deadzone = 20.0f32;
             let lt = if (gp.gamepad.b_left_trigger as f32) > trig_deadzone {
                 ((gp.gamepad.b_left_trigger as f32 - trig_deadzone) / (255.0 - trig_deadzone))
@@ -1007,7 +908,6 @@ fn run_freecam_loop() {
             cam_pos += step;
         }
 
-        // Matriz de visão 4x4 da câmera
         let new_matrix = F32Matrix4x4(
             F32Vector4(right.x, right.y, right.z, 0.0),
             F32Vector4(up.x, up.y, up.z, 0.0),

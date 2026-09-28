@@ -97,26 +97,26 @@ fn find_process_id(name: &str) -> Option<u32> {
     }
 }
 
-fn main() {
-    println!("=======================================================");
-    println!("   ELDEN RING NIGHTREIGN - FREECAM INJETOR (v1.03.2)   ");
-    println!("=======================================================\n");
+fn wait_for_enter() {
+    let mut s = String::new();
+    let _ = std::io::stdin().read_line(&mut s);
+}
 
-    println!("[*] Procurando pelo processo nightreign.exe...");
+fn main() {
+    println!("Elden Ring Nightreign - Freecam Injector");
 
     let pid = match find_process_id("nightreign.exe") {
         Some(id) => id,
         None => {
-            eprintln!("[!] nightreign.exe nao foi encontrado!");
-            eprintln!("[*] Abra o jogo e carregue no mapa primeiro, depois execute este injetor.");
-            println!("\nPressione Enter para sair...");
-            let mut s = String::new();
-            let _ = std::io::stdin().read_line(&mut s);
+            eprintln!("nightreign.exe process not found.");
+            eprintln!("Start the game and load into the world before injecting.");
+            println!("\nPress Enter to exit...");
+            wait_for_enter();
             return;
         }
     };
 
-    println!("[+] Processo encontrado com sucesso! PID: {}", pid);
+    println!("Target process found: PID {}", pid);
 
     let current_exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
     let exe_dir = current_exe.parent().unwrap_or_else(|| Path::new("."));
@@ -124,7 +124,6 @@ fn main() {
     let candidates = [
         exe_dir.join("agent.dll"),
         exe_dir.join("nightreign_freecam.dll"),
-        PathBuf::from(r"D:\Games\ELDEN RING NIGHTREIGN\Game\agent.dll"),
     ];
 
     let dll_path = candidates
@@ -134,37 +133,34 @@ fn main() {
         .unwrap_or_else(|| exe_dir.join("agent.dll"));
 
     if !dll_path.exists() {
-        eprintln!("[!] Arquivo da DLL nao encontrado em: {}", dll_path.display());
-        println!("\nPressione Enter para sair...");
-        let mut s = String::new();
-        let _ = std::io::stdin().read_line(&mut s);
+        eprintln!("DLL not found: {}", dll_path.display());
+        println!("\nPress Enter to exit...");
+        wait_for_enter();
         return;
     }
 
     let dll_path_canonical = dll_path.canonicalize().unwrap_or(dll_path);
-    println!("[*] Injetando DLL: {}", dll_path_canonical.display());
+    println!("Target DLL: {}", dll_path_canonical.display());
 
     unsafe {
         let process = OpenProcess(PROCESS_ALL_ACCESS, 0, pid);
         if process == 0 {
-            eprintln!("[!] Falha ao abrir o processo nightreign.exe.");
-            eprintln!("[*] Tente executar este injetor como Administrador.");
-            println!("\nPressione Enter para sair...");
-            let mut s = String::new();
-            let _ = std::io::stdin().read_line(&mut s);
+            eprintln!("Failed to open process. Try running as Administrator.");
+            println!("\nPress Enter to exit...");
+            wait_for_enter();
             return;
         }
 
         let kernel32 = GetModuleHandleA(b"kernel32.dll\0".as_ptr());
         if kernel32 == 0 {
-            eprintln!("[!] Falha ao obter handle de kernel32.dll.");
+            eprintln!("Failed to get kernel32.dll handle.");
             CloseHandle(process);
             return;
         }
 
         let load_lib_addr = GetProcAddress(kernel32, b"LoadLibraryW\0".as_ptr());
         if load_lib_addr.is_null() {
-            eprintln!("[!] Falha ao localizar LoadLibraryW.");
+            eprintln!("Failed to locate LoadLibraryW.");
             CloseHandle(process);
             return;
         }
@@ -182,7 +178,7 @@ fn main() {
         );
 
         if remote_mem.is_null() {
-            eprintln!("[!] Falha ao alocar memoria no processo do jogo.");
+            eprintln!("Failed to allocate remote memory in target process.");
             CloseHandle(process);
             return;
         }
@@ -197,7 +193,7 @@ fn main() {
         );
 
         if write_res == 0 {
-            eprintln!("[!] Falha ao escrever caminho da DLL na memoria remota.");
+            eprintln!("Failed to write DLL path to target memory.");
             CloseHandle(process);
             return;
         }
@@ -216,33 +212,29 @@ fn main() {
         );
 
         if thread_handle == 0 {
-            eprintln!("[!] Falha ao disparar thread remota para carregar DLL.");
+            eprintln!("Failed to create remote thread.");
             CloseHandle(process);
             return;
         }
 
-        println!("[*] Injetando...");
+        println!("Injecting DLL...");
         WaitForSingleObject(thread_handle, 5000);
 
         CloseHandle(thread_handle);
         CloseHandle(process);
 
-        println!("\n=======================================================");
-        println!("   >>> FREECAM INJETADA COM SUCESSO NO JOGO! <<<       ");
-        println!("=======================================================");
-        println!("Controles da Freecam:");
-        println!("  - Tecla P ou F1 : Ligar / Desligar Freecam");
-        println!("  - W, A, S, D    : Mover para frente/lados/tras");
-        println!("  - Espaco / Ctrl : Subir / Descer verticalmente");
-        println!("  - Shift / Alt   : Acelerar (Boost) / Precisao (Slow)");
-        println!("  - Botao Direito : Segurar e mover o mouse para girar");
-        println!("  - Setas / Numpad: Girar a câmera pelo teclado");
-        println!("  - Q / E         : Inclinar câmera (Roll)");
-        println!("  - [ e ]         : Ajustar Zoom (FOV)");
-        println!("=======================================================\n");
-        println!("Voce ja pode voltar para o jogo e usar a Freecam!");
-        println!("Pressione Enter para fechar esta janela...");
-        let mut s = String::new();
-        let _ = std::io::stdin().read_line(&mut s);
+        println!("Injection successful.\n");
+        println!("Controls:");
+        println!("  P / F1 / L3+R3    : Toggle Freecam");
+        println!("  W, A, S, D        : Move camera");
+        println!("  Space / Ctrl      : Up / Down");
+        println!("  Shift / Alt       : Boost / Slow speed");
+        println!("  Mouse / R-Stick   : Look around (360)");
+        println!("  Q / E (R to reset): Roll camera");
+        println!("  [ / ]             : Adjust FOV");
+        println!("  T / LB+Y          : Teleport character to camera & land");
+        println!("  Home / Backspace  : Emergency return to spawn origin");
+        println!("\nPress Enter to exit...");
+        wait_for_enter();
     }
 }
